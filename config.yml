@@ -1,0 +1,49 @@
+app:
+  title: "YFinance Agent Dashboard"
+  layout: "wide"
+
+dashboard:
+  default_user_input: "I want a tech-focused growth portfolio."
+  ticker_delimiter: ","
+
+ui:
+  sidebar_header: "Portfolio Preferences"
+  input_label: "Describe your portfolio preferences:"
+  button_label: "Generate Portfolio"
+  suggested_label: "Suggested Tickers:"
+  ticker_header_template: "Data for {ticker}"
+  section_history: "Historical Data:"
+  section_financials: "Financials:"
+  section_recommendations: "Recommendations:"
+  missing_api_key: "Missing OpenRouter API key. See config.yml and .secrets.yml."
+  max_tickers_warning: "Limiting to {max_tickers} tickers for analysis."
+  history_ticker_label: "Tickers to plot (history)"
+  recommendations_missing: "Recommendations summary not available for {ticker}."
+
+openrouter:
+  base_url: "https://openrouter.ai/api/v1"
+  model: "openrouter/auto"
+  max_tokens: 100
+  temperature: 0.2
+  system_prompt: "You are a financial assistant. Respond with a comma-separated list of US stock tickers only."
+  prompt_template: "Suggest a list of US stock tickers for the following portfolio preferences: {user_input}"
+  http_referer: "http://localhost:8501"
+  app_title: "YFinance Agent"
+
+secrets:
+  file: ".secrets.yml"
+
+stocks:
+  history_period: "1y"
+  financials_period: "quarterly"
+  max_tickers: 10
+  financials_metrics:
+    - "Total Revenue"
+    - "Cost Of Revenue"
+    - "Operating Income"
+    - "EBITDA"
+    - "Net Income"
+
+recommendations:
+  current_period: "0m"
+  previous_period: "1m"
