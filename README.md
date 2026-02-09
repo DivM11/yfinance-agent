@@ -50,12 +50,16 @@ poetry run streamlit run main.py
 
 ## Configuration and Secrets
 - Update [config.yml](config.yml) for model, prompts, and UI text.
-- Create a local `.secrets.yml` file (gitignored) to store the OpenRouter API key.
+- Create a local `.env` file (gitignored) to store the OpenRouter API key.
 
-Example `.secrets.yml`:
-```yaml
-openrouter:
-   api_key: "your_api_key_here"
+Example `.env`:
+```bash
+OPENROUTER_API_KEY="your_api_key_here"
+```
+
+You can copy `.env.example` to get started:
+```bash
+cp .env.example .env
 ```
 
 ## Using Docker

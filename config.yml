@@ -15,7 +15,11 @@ ui:
   section_history: "Historical Data:"
   section_financials: "Financials:"
   section_recommendations: "Recommendations:"
-  missing_api_key: "Missing OpenRouter API key. See config.yml and .secrets.yml."
+  download_prompt: "Download as CSV:"
+  download_history_label: "Historical prices CSV"
+  download_financials_label: "Financials CSV"
+  download_recommendations_label: "Recommendations CSV"
+  missing_api_key: "Missing OpenRouter API key. Set OPENROUTER_API_KEY in .env."
   max_tickers_warning: "Limiting to {max_tickers} tickers for analysis."
   history_ticker_label: "Tickers to plot (history)"
   recommendations_missing: "Recommendations summary not available for {ticker}."
@@ -29,9 +33,6 @@ openrouter:
   prompt_template: "Suggest a list of US stock tickers for the following portfolio preferences: {user_input}"
   http_referer: "http://localhost:8501"
   app_title: "YFinance Agent"
-
-secrets:
-  file: ".secrets.yml"
 
 stocks:
   history_period: "1y"

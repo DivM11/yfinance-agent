@@ -93,6 +93,18 @@ def limit_tickers(tickers: List[str], max_tickers: int) -> List[str]:
     return tickers[:max_tickers]
 
 
+def _df_to_csv_bytes(df: pd.DataFrame) -> bytes:
+    return df.to_csv().encode("utf-8")
+
+
+def _init_state(default_user_input: str) -> None:
+    state = st.session_state
+    state.setdefault("user_input", default_user_input)
+    state.setdefault("tickers", [])
+    state.setdefault("data_by_ticker", {})
+    state.setdefault("selected_history_tickers", [])
+
+
 def run_dashboard(config: Dict[str, Any]) -> None:
     """Run the Streamlit dashboard."""
     st.title(config["app"]["title"])
@@ -103,8 +115,10 @@ def run_dashboard(config: Dict[str, Any]) -> None:
     stocks_cfg = config["stocks"]
     recommendations_cfg = config["recommendations"]
 
+    _init_state(dashboard["default_user_input"])
+
     st.sidebar.header(ui["sidebar_header"])
-    user_input = st.sidebar.text_area(ui["input_label"], dashboard["default_user_input"])
+    user_input = st.sidebar.text_area(ui["input_label"], key="user_input")
 
     api_key = openrouter_cfg.get("api_key")
     if not api_key:
@@ -138,13 +152,6 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             )
         tickers = limited_tickers
 
-        st.sidebar.write(ui["suggested_label"], tickers)
-        selected_history_tickers = st.sidebar.multiselect(
-            ui["history_ticker_label"],
-            options=tickers,
-            default=tickers,
-        )
-
         data_by_ticker: Dict[str, Dict[str, Any]] = {}
         for ticker in tickers:
             data_by_ticker[ticker] = fetch_stock_data(
@@ -153,40 +160,79 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                 financials_period=stocks_cfg["financials_period"],
             )
 
-        history_fig = plot_history(
-            {ticker: data["history"] for ticker, data in data_by_ticker.items()},
-            selected_tickers=selected_history_tickers,
+        st.session_state["tickers"] = tickers
+        st.session_state["data_by_ticker"] = data_by_ticker
+        st.session_state["selected_history_tickers"] = tickers
+
+    tickers = st.session_state.get("tickers", [])
+    if not tickers:
+        return
+
+    st.sidebar.write(ui["suggested_label"], tickers)
+    selected_history_tickers = st.sidebar.multiselect(
+        ui["history_ticker_label"],
+        options=tickers,
+        default=st.session_state.get("selected_history_tickers", tickers),
+        key="selected_history_tickers",
+    )
+
+    data_by_ticker = st.session_state.get("data_by_ticker", {})
+    history_fig = plot_history(
+        {ticker: data["history"] for ticker, data in data_by_ticker.items()},
+        selected_tickers=selected_history_tickers,
+    )
+    if history_fig is not None:
+        st.plotly_chart(history_fig, use_container_width=True)
+
+    for ticker in tickers:
+        st.subheader(ui["ticker_header_template"].format(ticker=ticker))
+        data = data_by_ticker.get(ticker, {})
+
+        st.write(ui["section_history"])
+        st.caption(ui["download_prompt"])
+        history = data.get("history", pd.DataFrame())
+        st.download_button(
+            label=f"{ui['download_history_label']} ({ticker})",
+            data=_df_to_csv_bytes(history),
+            file_name=f"{ticker}_history.csv",
+            mime="text/csv",
         )
-        if history_fig is not None:
-            st.plotly_chart(history_fig, use_container_width=True)
 
-        for ticker in tickers:
-            st.subheader(ui["ticker_header_template"].format(ticker=ticker))
-            data = data_by_ticker[ticker]
-            st.write(ui["section_history"])
-            st.dataframe(data["history"])
+        financials_fig = plot_financials(
+            data.get("financials", pd.DataFrame()),
+            metrics=stocks_cfg["financials_metrics"],
+            title=f"{ticker} Financials",
+        )
+        if financials_fig is not None:
+            st.plotly_chart(financials_fig, use_container_width=True)
 
-            financials_fig = plot_financials(
-                data["financials"],
-                metrics=stocks_cfg["financials_metrics"],
-                title=f"{ticker} Financials",
-            )
-            if financials_fig is not None:
-                st.plotly_chart(financials_fig, use_container_width=True)
+        st.write(ui["section_financials"])
+        st.caption(ui["download_prompt"])
+        financials = data.get("financials", pd.DataFrame())
+        st.download_button(
+            label=f"{ui['download_financials_label']} ({ticker})",
+            data=_df_to_csv_bytes(financials),
+            file_name=f"{ticker}_financials.csv",
+            mime="text/csv",
+        )
 
-            st.write(ui["section_financials"])
-            st.dataframe(data["financials"])
+        recommendations_fig = plot_recommendations(
+            data.get("recommendations_summary", pd.DataFrame()),
+            current_period=recommendations_cfg["current_period"],
+            previous_period=recommendations_cfg["previous_period"],
+            title=f"{ticker} Recommendations",
+        )
+        if recommendations_fig is not None:
+            st.plotly_chart(recommendations_fig, use_container_width=True)
+        else:
+            st.info(ui["recommendations_missing"].format(ticker=ticker))
 
-            recommendations_fig = plot_recommendations(
-                data["recommendations_summary"],
-                current_period=recommendations_cfg["current_period"],
-                previous_period=recommendations_cfg["previous_period"],
-                title=f"{ticker} Recommendations",
-            )
-            if recommendations_fig is not None:
-                st.plotly_chart(recommendations_fig, use_container_width=True)
-            else:
-                st.info(ui["recommendations_missing"].format(ticker=ticker))
-
-            st.write(ui["section_recommendations"])
-            st.dataframe(data["recommendations"])
+        st.write(ui["section_recommendations"])
+        st.caption(ui["download_prompt"])
+        recommendations = data.get("recommendations", pd.DataFrame())
+        st.download_button(
+            label=f"{ui['download_recommendations_label']} ({ticker})",
+            data=_df_to_csv_bytes(recommendations),
+            file_name=f"{ticker}_recommendations.csv",
+            mime="text/csv",
+        )

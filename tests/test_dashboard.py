@@ -81,8 +81,10 @@ class DummySidebar:
     def __init__(self, button_value: bool, user_input: str = "input") -> None:
         self._button_value = button_value
         self._user_input = user_input
+        self.session_state = None
         self.header_text = None
         self.text_area_args = None
+        self.multiselect_args = None
         self.error_msg = None
         self.write_args = None
         self.warning_msg = None
@@ -91,13 +93,26 @@ class DummySidebar:
     def header(self, text: str) -> None:
         self.header_text = text
 
-    def text_area(self, label: str, value: str) -> str:
-        self.text_area_args = (label, value)
+    def text_area(self, label: str, value: str | None = None, key: str | None = None) -> str:
+        self.text_area_args = (label, value, key)
+        if key and self.session_state is not None:
+            if key not in self.session_state:
+                self.session_state[key] = value if value is not None else self._user_input
+            return self.session_state[key]
         return self._user_input
 
     def button(self, label: str) -> bool:
         self.button_called = True
         return self._button_value
+
+    def multiselect(self, label: str, options, default=None, key: str | None = None):
+        self.multiselect_args = (label, options, default, key)
+        selection = default or []
+        if key and self.session_state is not None:
+            if key not in self.session_state:
+                self.session_state[key] = selection
+            return self.session_state[key]
+        return selection
 
     def write(self, label: str, value) -> None:
         self.write_args = (label, value)
@@ -112,12 +127,16 @@ class DummySidebar:
 class DummyStreamlit:
     def __init__(self, sidebar: DummySidebar) -> None:
         self.sidebar = sidebar
+        self.session_state = {}
+        self.sidebar.session_state = self.session_state
         self.title_text = None
         self.subheaders = []
         self.writes = []
         self.dataframes = []
         self.plots = []
         self.infos = []
+        self.download_buttons = []
+        self.captions = []
 
     def title(self, text: str) -> None:
         self.title_text = text
@@ -139,6 +158,12 @@ class DummyStreamlit:
 
     def info(self, text: str) -> None:
         self.infos.append(text)
+
+    def download_button(self, label: str, data, file_name: str, mime: str) -> None:
+        self.download_buttons.append((label, file_name, mime, data))
+
+    def caption(self, text: str) -> None:
+        self.captions.append(text)
 
 
 def test_build_prompt():
@@ -224,6 +249,10 @@ def _base_config(api_key: str | None) -> dict:
             "section_history": "History",
             "section_financials": "Financials",
             "section_recommendations": "Recommendations",
+            "download_prompt": "Download",
+            "download_history_label": "History CSV",
+            "download_financials_label": "Financials CSV",
+            "download_recommendations_label": "Recommendations CSV",
             "missing_api_key": "Missing",
             "max_tickers_warning": "Limiting to {max_tickers}",
             "history_ticker_label": "History tickers",
@@ -302,5 +331,6 @@ def test_run_dashboard_button_clicked(monkeypatch):
 
     assert sidebar.write_args == ("Suggested", ["AAPL", "MSFT"])
     assert len(st.subheaders) == 2
-    assert len(st.dataframes) == 6
+    assert len(st.dataframes) == 0
+    assert len(st.download_buttons) == 6
     assert len(st.plots) == 5
