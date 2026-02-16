@@ -46,7 +46,7 @@ openrouter:
   weights_max_tokens: 200
   weights_temperature: 0.1
   weights_system_prompt: "You are a portfolio allocator. Return JSON only."
-  weights_prompt_template: "Given the user preferences and ticker summary, return weights that sum to 1. Use JSON: {\"weights\": {\"TICKER\": 0.25}}.\nUser preferences: {user_input}\nTickers: {tickers}\nSummary:\n{summary}"
+  weights_prompt_template: "Given the user preferences and ticker summary, return weights that sum to 1. Use JSON: {{\"weights\": {{\"TICKER\": 0.25}}}}.\nUser preferences: {user_input}\nTickers: {tickers}\nSummary:\n{summary}"
   analysis_model: "openrouter/auto"
   analysis_max_tokens: 300
   analysis_temperature: 0.2
