@@ -78,32 +78,30 @@ class DummyClient:
 
 
 class DummySidebar:
-    def __init__(self, button_value: bool, user_input: str = "input") -> None:
-        self._button_value = button_value
-        self._user_input = user_input
+    def __init__(self) -> None:
         self.session_state = None
         self.header_text = None
-        self.text_area_args = None
         self.multiselect_args = None
+        self.number_input_args = None
         self.error_msg = None
         self.write_args = None
         self.warning_msg = None
-        self.button_called = False
 
     def header(self, text: str) -> None:
         self.header_text = text
 
-    def text_area(self, label: str, value: str | None = None, key: str | None = None) -> str:
-        self.text_area_args = (label, value, key)
+    def number_input(
+        self,
+        label: str,
+        min_value: float,
+        step: float,
+        key: str | None = None,
+    ) -> float:
+        self.number_input_args = (label, min_value, step, key)
         if key and self.session_state is not None:
-            if key not in self.session_state:
-                self.session_state[key] = value if value is not None else self._user_input
+            self.session_state.setdefault(key, min_value)
             return self.session_state[key]
-        return self._user_input
-
-    def button(self, label: str) -> bool:
-        self.button_called = True
-        return self._button_value
+        return min_value
 
     def multiselect(self, label: str, options, default=None, key: str | None = None):
         self.multiselect_args = (label, options, default, key)
@@ -124,11 +122,20 @@ class DummySidebar:
         self.warning_msg = msg
 
 
+class DummyContainer:
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return False
+
+
 class DummyStreamlit:
-    def __init__(self, sidebar: DummySidebar) -> None:
+    def __init__(self, sidebar: DummySidebar, chat_input_value: str | None) -> None:
         self.sidebar = sidebar
         self.session_state = {}
         self.sidebar.session_state = self.session_state
+        self._chat_input_value = chat_input_value
         self.title_text = None
         self.subheaders = []
         self.writes = []
@@ -137,6 +144,9 @@ class DummyStreamlit:
         self.infos = []
         self.download_buttons = []
         self.captions = []
+        self.chat_messages = []
+        self.markdowns = []
+        self.tabs_created = []
 
     def title(self, text: str) -> None:
         self.title_text = text
@@ -164,6 +174,23 @@ class DummyStreamlit:
 
     def caption(self, text: str) -> None:
         self.captions.append(text)
+
+    def columns(self, _spec, gap: str | None = None):
+        return [DummyContainer(), DummyContainer()]
+
+    def tabs(self, labels):
+        self.tabs_created = labels
+        return [DummyContainer() for _ in labels]
+
+    def chat_input(self, _placeholder: str):
+        return self._chat_input_value
+
+    def chat_message(self, role: str):
+        self.chat_messages.append(role)
+        return DummyContainer()
+
+    def markdown(self, text: str) -> None:
+        self.markdowns.append(text)
 
 
 def test_build_prompt():
@@ -242,8 +269,8 @@ def _base_config(api_key: str | None) -> dict:
         "app": {"title": "Title", "layout": "wide"},
         "ui": {
             "sidebar_header": "Header",
-            "input_label": "Input",
-            "button_label": "Run",
+            "portfolio_size_label": "Portfolio Size ($)",
+            "chat_placeholder": "Chat",
             "suggested_label": "Suggested",
             "ticker_header_template": "Data for {ticker}",
             "section_history": "History",
@@ -257,8 +284,15 @@ def _base_config(api_key: str | None) -> dict:
             "max_tickers_warning": "Limiting to {max_tickers}",
             "history_ticker_label": "History tickers",
             "recommendations_missing": "Missing recs for {ticker}",
+            "history_tab_label": "History",
+            "financials_tab_label": "Financials",
+            "recommendations_tab_label": "Recommendations",
         },
-        "dashboard": {"default_user_input": "default", "ticker_delimiter": ","},
+        "dashboard": {
+            "default_user_input": "default",
+            "default_portfolio_size": 1000.0,
+            "ticker_delimiter": ",",
+        },
         "openrouter": {
             "api_key": api_key,
             "base_url": "https://example.com",
@@ -267,13 +301,18 @@ def _base_config(api_key: str | None) -> dict:
             "temperature": 0.1,
             "system_prompt": "system",
             "prompt_template": "Prompt {user_input}",
+            "analysis_model": "model",
+            "analysis_max_tokens": 5,
+            "analysis_temperature": 0.1,
+            "analysis_system_prompt": "analysis",
+            "analysis_prompt_template": "Summary {summary}",
             "http_referer": "http://localhost",
             "app_title": "App",
         },
         "stocks": {
             "history_period": "1y",
             "financials_period": "quarterly",
-            "max_tickers": 10,
+            "max_tickers": 5,
             "financials_metrics": ["Total Revenue"],
         },
         "recommendations": {"current_period": "0m", "previous_period": "1m"},
@@ -281,19 +320,18 @@ def _base_config(api_key: str | None) -> dict:
 
 
 def test_run_dashboard_missing_api_key(monkeypatch):
-    sidebar = DummySidebar(button_value=False)
-    st = DummyStreamlit(sidebar)
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value=None)
     monkeypatch.setattr("src.dashboard.st", st)
 
     run_dashboard(_base_config(api_key=None))
 
     assert sidebar.error_msg == "Missing"
-    assert sidebar.button_called is False
 
 
-def test_run_dashboard_button_not_clicked(monkeypatch):
-    sidebar = DummySidebar(button_value=False)
-    st = DummyStreamlit(sidebar)
+def test_run_dashboard_no_prompt(monkeypatch):
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value=None)
     monkeypatch.setattr("src.dashboard.st", st)
 
     def should_not_be_called(*_args, **_kwargs):
@@ -304,16 +342,14 @@ def test_run_dashboard_button_not_clicked(monkeypatch):
     run_dashboard(_base_config(api_key="key"))
 
     assert sidebar.error_msg is None
-    assert sidebar.button_called is True
 
 
-def test_run_dashboard_button_clicked(monkeypatch):
-    sidebar = DummySidebar(button_value=True)
-    st = DummyStreamlit(sidebar)
+def test_run_dashboard_prompt_flow(monkeypatch):
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value="prompt")
     monkeypatch.setattr("src.dashboard.st", st)
 
-    monkeypatch.setattr("src.dashboard.create_openrouter_client", lambda **_kwargs: DummyClient(""))
-    monkeypatch.setattr("src.dashboard.generate_tickers", lambda **_kwargs: ["AAPL", "MSFT"])
+    monkeypatch.setattr("src.dashboard.create_openrouter_client", lambda **_kwargs: DummyClient("AAPL, MSFT"))
     monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
     monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
     monkeypatch.setattr("src.dashboard.plot_recommendations", lambda *_args, **_kwargs: "recommendations")
@@ -330,7 +366,7 @@ def test_run_dashboard_button_clicked(monkeypatch):
     run_dashboard(_base_config(api_key="key"))
 
     assert sidebar.write_args == ("Suggested", ["AAPL", "MSFT"])
-    assert len(st.subheaders) == 2
+    assert len(st.subheaders) == 4
     assert len(st.dataframes) == 0
     assert len(st.download_buttons) == 6
     assert len(st.plots) == 5

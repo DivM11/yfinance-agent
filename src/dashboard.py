@@ -10,6 +10,8 @@ import pandas as pd
 from openai import OpenAI
 
 from src.plots import plot_financials, plot_history, plot_recommendations
+from src.portfolio import allocate_portfolio, format_portfolio_allocation
+from src.summaries import build_portfolio_summary
 
 
 def create_openrouter_client(
@@ -97,12 +99,14 @@ def _df_to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv().encode("utf-8")
 
 
-def _init_state(default_user_input: str) -> None:
+def _init_state(default_user_input: str, default_portfolio_size: float) -> None:
     state = st.session_state
+    state.setdefault("messages", [])
     state.setdefault("user_input", default_user_input)
     state.setdefault("tickers", [])
     state.setdefault("data_by_ticker", {})
     state.setdefault("selected_history_tickers", [])
+    state.setdefault("portfolio_size", default_portfolio_size)
 
 
 def run_dashboard(config: Dict[str, Any]) -> None:
@@ -115,18 +119,33 @@ def run_dashboard(config: Dict[str, Any]) -> None:
     stocks_cfg = config["stocks"]
     recommendations_cfg = config["recommendations"]
 
-    _init_state(dashboard["default_user_input"])
+    _init_state(dashboard["default_user_input"], dashboard["default_portfolio_size"])
 
     st.sidebar.header(ui["sidebar_header"])
-    user_input = st.sidebar.text_area(ui["input_label"], key="user_input")
+    st.sidebar.number_input(
+        ui["portfolio_size_label"],
+        min_value=0.0,
+        step=100.0,
+        key="portfolio_size",
+    )
 
     api_key = openrouter_cfg.get("api_key")
     if not api_key:
         st.sidebar.error(ui["missing_api_key"])
         return
 
-    if st.sidebar.button(ui["button_label"]):
-        prompt = build_prompt(openrouter_cfg["prompt_template"], user_input)
+    chat_col, plots_col = st.columns([1, 1.4], gap="large")
+
+    with chat_col:
+        for message in st.session_state["messages"]:
+            with st.chat_message(message["role"]):
+                st.markdown(message["content"])
+
+        prompt_input = st.chat_input(ui["chat_placeholder"])
+
+    if prompt_input:
+        st.session_state["messages"].append({"role": "user", "content": prompt_input})
+        prompt = build_prompt(openrouter_cfg["prompt_template"], prompt_input)
         client = create_openrouter_client(
             api_key=api_key,
             base_url=openrouter_cfg["base_url"],
@@ -160,6 +179,41 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                 financials_period=stocks_cfg["financials_period"],
             )
 
+        summary_text = build_portfolio_summary(
+            tickers=tickers,
+            data_by_ticker=data_by_ticker,
+            financial_metrics=stocks_cfg["financials_metrics"],
+            current_period=recommendations_cfg["current_period"],
+            previous_period=recommendations_cfg["previous_period"],
+        )
+
+        allocation = allocate_portfolio(
+            tickers=tickers,
+            total_amount=st.session_state["portfolio_size"],
+        )
+        allocation_text = format_portfolio_allocation(allocation)
+
+        analysis_prompt = openrouter_cfg["analysis_prompt_template"].format(
+            user_input=prompt_input,
+            tickers=", ".join(tickers),
+            portfolio_size=st.session_state["portfolio_size"],
+            summary=summary_text,
+            allocation=allocation_text,
+        )
+        analysis_response = client.chat.completions.create(
+            model=openrouter_cfg["analysis_model"],
+            max_tokens=openrouter_cfg["analysis_max_tokens"],
+            temperature=openrouter_cfg["analysis_temperature"],
+            messages=[
+                {"role": "system", "content": openrouter_cfg["analysis_system_prompt"]},
+                {"role": "user", "content": analysis_prompt},
+            ],
+        )
+        analysis_text = _extract_message_text(analysis_response)
+
+        st.session_state["messages"].append({"role": "assistant", "content": allocation_text})
+        st.session_state["messages"].append({"role": "assistant", "content": analysis_text})
+
         st.session_state["tickers"] = tickers
         st.session_state["data_by_ticker"] = data_by_ticker
         st.session_state["selected_history_tickers"] = tickers
@@ -177,62 +231,69 @@ def run_dashboard(config: Dict[str, Any]) -> None:
     )
 
     data_by_ticker = st.session_state.get("data_by_ticker", {})
-    history_fig = plot_history(
-        {ticker: data["history"] for ticker, data in data_by_ticker.items()},
-        selected_tickers=selected_history_tickers,
-    )
-    if history_fig is not None:
-        st.plotly_chart(history_fig, use_container_width=True)
 
-    for ticker in tickers:
-        st.subheader(ui["ticker_header_template"].format(ticker=ticker))
-        data = data_by_ticker.get(ticker, {})
+    with plots_col:
+        tabs = st.tabs([ui["history_tab_label"], ui["financials_tab_label"], ui["recommendations_tab_label"]])
 
-        st.write(ui["section_history"])
-        st.caption(ui["download_prompt"])
-        history = data.get("history", pd.DataFrame())
-        st.download_button(
-            label=f"{ui['download_history_label']} ({ticker})",
-            data=_df_to_csv_bytes(history),
-            file_name=f"{ticker}_history.csv",
-            mime="text/csv",
-        )
+        with tabs[0]:
+            history_fig = plot_history(
+                {ticker: data["history"] for ticker, data in data_by_ticker.items()},
+                selected_tickers=selected_history_tickers,
+            )
+            if history_fig is not None:
+                st.plotly_chart(history_fig, use_container_width=True)
 
-        financials_fig = plot_financials(
-            data.get("financials", pd.DataFrame()),
-            metrics=stocks_cfg["financials_metrics"],
-            title=f"{ticker} Financials",
-        )
-        if financials_fig is not None:
-            st.plotly_chart(financials_fig, use_container_width=True)
+            st.caption(ui["download_prompt"])
+            for ticker in tickers:
+                history = data_by_ticker.get(ticker, {}).get("history", pd.DataFrame())
+                st.download_button(
+                    label=f"{ui['download_history_label']} ({ticker})",
+                    data=_df_to_csv_bytes(history),
+                    file_name=f"{ticker}_history.csv",
+                    mime="text/csv",
+                )
 
-        st.write(ui["section_financials"])
-        st.caption(ui["download_prompt"])
-        financials = data.get("financials", pd.DataFrame())
-        st.download_button(
-            label=f"{ui['download_financials_label']} ({ticker})",
-            data=_df_to_csv_bytes(financials),
-            file_name=f"{ticker}_financials.csv",
-            mime="text/csv",
-        )
+        with tabs[1]:
+            for ticker in tickers:
+                st.subheader(ui["ticker_header_template"].format(ticker=ticker))
+                data = data_by_ticker.get(ticker, {})
+                financials_fig = plot_financials(
+                    data.get("financials", pd.DataFrame()),
+                    metrics=stocks_cfg["financials_metrics"],
+                    title=f"{ticker} Financials",
+                )
+                if financials_fig is not None:
+                    st.plotly_chart(financials_fig, use_container_width=True)
 
-        recommendations_fig = plot_recommendations(
-            data.get("recommendations_summary", pd.DataFrame()),
-            current_period=recommendations_cfg["current_period"],
-            previous_period=recommendations_cfg["previous_period"],
-            title=f"{ticker} Recommendations",
-        )
-        if recommendations_fig is not None:
-            st.plotly_chart(recommendations_fig, use_container_width=True)
-        else:
-            st.info(ui["recommendations_missing"].format(ticker=ticker))
+                st.caption(ui["download_prompt"])
+                financials = data.get("financials", pd.DataFrame())
+                st.download_button(
+                    label=f"{ui['download_financials_label']} ({ticker})",
+                    data=_df_to_csv_bytes(financials),
+                    file_name=f"{ticker}_financials.csv",
+                    mime="text/csv",
+                )
 
-        st.write(ui["section_recommendations"])
-        st.caption(ui["download_prompt"])
-        recommendations = data.get("recommendations", pd.DataFrame())
-        st.download_button(
-            label=f"{ui['download_recommendations_label']} ({ticker})",
-            data=_df_to_csv_bytes(recommendations),
-            file_name=f"{ticker}_recommendations.csv",
-            mime="text/csv",
-        )
+        with tabs[2]:
+            for ticker in tickers:
+                st.subheader(ui["ticker_header_template"].format(ticker=ticker))
+                data = data_by_ticker.get(ticker, {})
+                recommendations_fig = plot_recommendations(
+                    data.get("recommendations_summary", pd.DataFrame()),
+                    current_period=recommendations_cfg["current_period"],
+                    previous_period=recommendations_cfg["previous_period"],
+                    title=f"{ticker} Recommendations",
+                )
+                if recommendations_fig is not None:
+                    st.plotly_chart(recommendations_fig, use_container_width=True)
+                else:
+                    st.info(ui["recommendations_missing"].format(ticker=ticker))
+
+                st.caption(ui["download_prompt"])
+                recommendations = data.get("recommendations", pd.DataFrame())
+                st.download_button(
+                    label=f"{ui['download_recommendations_label']} ({ticker})",
+                    data=_df_to_csv_bytes(recommendations),
+                    file_name=f"{ticker}_recommendations.csv",
+                    mime="text/csv",
+                )

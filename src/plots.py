@@ -9,6 +9,8 @@ import plotly.graph_objects as go
 from plotly.graph_objects import Figure
 from plotly.subplots import make_subplots
 
+from src.recommendations import CATEGORIES, summarize_recommendations_counts
+
 
 def _apply_gridlines(fig: Figure) -> None:
     fig.update_xaxes(showgrid=True, gridcolor="#E6E6E6")
@@ -99,62 +101,6 @@ def plot_financials(
     return fig
 
 
-def _normalize_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    normalized = {}
-    for col in df.columns:
-        normalized[col] = col.strip().lower()
-
-    rename_map = {
-        "strongbuy": "StrongBuy",
-        "buy": "Buy",
-        "hold": "Hold",
-        "sell": "Sell",
-        "strongsell": "StrongSell",
-    }
-
-    df = df.rename(columns={col: rename_map.get(norm, col) for col, norm in normalized.items()})
-    return df
-
-
-def _normalize_period_index(df: pd.DataFrame) -> pd.DataFrame:
-    if df is None or df.empty:
-        return pd.DataFrame()
-
-    normalized = df.copy()
-    if "period" in normalized.columns:
-        normalized["period"] = normalized["period"].astype(str)
-        normalized = normalized.set_index("period")
-
-    normalized.index = normalized.index.astype(str).str.strip().str.lower()
-    return normalized
-
-
-def _normalize_period_value(value: str) -> str:
-    return str(value).strip().lower()
-
-
-def _period_candidates(period: str) -> List[str]:
-    normalized = _normalize_period_value(period)
-    candidates = [normalized]
-    if normalized.startswith("-"):
-        candidates.append(normalized[1:])
-    elif normalized and normalized != "0m":
-        candidates.append(f"-{normalized}")
-    return list(dict.fromkeys(candidates))
-
-
-def _extract_period_row(df: pd.DataFrame, period: str) -> Optional[pd.Series]:
-    if df is None or df.empty:
-        return None
-    for candidate in _period_candidates(period):
-        if candidate in df.index:
-            return df.loc[candidate]
-    return None
-
-
 def plot_recommendations(
     summary: pd.DataFrame,
     current_period: str,
@@ -165,26 +111,19 @@ def plot_recommendations(
     if summary is None or summary.empty:
         return None
 
-    summary = _normalize_recommendation_columns(summary)
-    summary = _normalize_period_index(summary)
-
-    current = _extract_period_row(summary, current_period)
-    previous = _extract_period_row(summary, previous_period)
-    if current is None:
+    current_vals, delta_vals = summarize_recommendations_counts(
+        summary,
+        current_period=current_period,
+        previous_period=previous_period,
+    )
+    if not current_vals:
         return None
-
-    categories = ["StrongBuy", "Buy", "Hold", "Sell", "StrongSell"]
-    current_vals = current.reindex(categories).fillna(0)
-
-    delta_vals = None
-    if previous is not None:
-        delta_vals = current_vals - previous.reindex(categories).fillna(0)
 
     rows = 2 if delta_vals is not None else 1
     fig = make_subplots(rows=rows, cols=1, shared_xaxes=False)
 
     fig.add_trace(
-        go.Bar(x=categories, y=current_vals.values, name="Current"),
+        go.Bar(x=CATEGORIES, y=list(current_vals.values()), name="Current"),
         row=1,
         col=1,
     )
@@ -192,7 +131,7 @@ def plot_recommendations(
 
     if delta_vals is not None:
         fig.add_trace(
-            go.Bar(x=categories, y=delta_vals.values, name="Delta"),
+            go.Bar(x=CATEGORIES, y=list(delta_vals.values()), name="Delta"),
             row=2,
             col=1,
         )
