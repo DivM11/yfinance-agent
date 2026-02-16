@@ -3,8 +3,11 @@
 import pandas as pd
 
 from src.summaries import (
+    build_portfolio_returns_series,
     summarize_financials_latest,
     summarize_history_stats,
+    summarize_portfolio_financials,
+    summarize_portfolio_stats,
     summarize_recommendations_counts,
     build_ticker_summary,
 )
@@ -66,3 +69,46 @@ def test_build_ticker_summary():
 
     assert "AAPL" in summary_text
     assert "price" in summary_text.lower()
+
+
+def test_build_portfolio_returns_series():
+    history = {
+        "AAPL": pd.DataFrame({"Close": [10.0, 11.0, 12.0]}),
+        "MSFT": pd.DataFrame({"Close": [20.0, 22.0, 21.0]}),
+    }
+
+    series = build_portfolio_returns_series(history, {"AAPL": 0.5, "MSFT": 0.5})
+
+    assert not series.empty
+    assert series.name == "Portfolio"
+
+
+def test_summarize_portfolio_stats():
+    series = pd.Series([1.0, 1.05, 1.02])
+
+    stats = summarize_portfolio_stats(series)
+
+    assert stats["min"] == 1.0
+    assert stats["current"] == 1.02
+    assert round(stats["return_1y"], 2) == 0.02
+
+
+def test_summarize_portfolio_financials():
+    financials = {
+        "AAPL": pd.DataFrame(
+            {"2024-01-01": [100], "2024-04-01": [110]},
+            index=["Total Revenue"],
+        ),
+        "MSFT": pd.DataFrame(
+            {"2024-01-01": [200], "2024-04-01": [220]},
+            index=["Total Revenue"],
+        ),
+    }
+
+    summary = summarize_portfolio_financials(
+        financials,
+        weights={"AAPL": 0.5, "MSFT": 0.5},
+        metrics=["Total Revenue"],
+    )
+
+    assert summary["Total Revenue"] == 165.0

@@ -58,22 +58,24 @@ class DummyResponse:
 
 
 class DummyChatCompletions:
-    def __init__(self, content: str) -> None:
-        self._content = content
+    def __init__(self, contents) -> None:
+        self._contents = list(contents) if isinstance(contents, list) else [contents]
 
     def create(self, **_kwargs):
-        return DummyResponse(self._content)
+        if not self._contents:
+            return DummyResponse("")
+        return DummyResponse(self._contents.pop(0))
 
 
 class DummyChat:
-    def __init__(self, content: str) -> None:
+    def __init__(self, content) -> None:
         self.completions = DummyChatCompletions(content)
 
 
 class DummyClient:
     """Minimal stub for OpenAI-compatible client."""
 
-    def __init__(self, text: str) -> None:
+    def __init__(self, text) -> None:
         self.chat = DummyChat(text)
 
 
@@ -271,6 +273,7 @@ def _base_config(api_key: str | None) -> dict:
             "sidebar_header": "Header",
             "portfolio_size_label": "Portfolio Size ($)",
             "chat_placeholder": "Chat",
+            "chat_intro": "Intro",
             "suggested_label": "Suggested",
             "ticker_header_template": "Data for {ticker}",
             "section_history": "History",
@@ -287,6 +290,12 @@ def _base_config(api_key: str | None) -> dict:
             "history_tab_label": "History",
             "financials_tab_label": "Financials",
             "recommendations_tab_label": "Recommendations",
+            "portfolio_tab_label": "Portfolio",
+            "portfolio_output_label": "Recommended Portfolio",
+            "portfolio_stats_label": "Portfolio Stats",
+            "portfolio_returns_label": "Portfolio Returns",
+            "portfolio_financials_label": "Portfolio Financials",
+            "portfolio_stats_template": "Min {min} Max {max} Median {median} Current {current} Return {return_1y}",
         },
         "dashboard": {
             "default_user_input": "default",
@@ -301,11 +310,16 @@ def _base_config(api_key: str | None) -> dict:
             "temperature": 0.1,
             "system_prompt": "system",
             "prompt_template": "Prompt {user_input}",
+            "weights_model": "model",
+            "weights_max_tokens": 5,
+            "weights_temperature": 0.1,
+            "weights_system_prompt": "weights",
+            "weights_prompt_template": "Weights {summary}",
             "analysis_model": "model",
             "analysis_max_tokens": 5,
             "analysis_temperature": 0.1,
             "analysis_system_prompt": "analysis",
-            "analysis_prompt_template": "Summary {summary}",
+            "analysis_prompt_template": "Summary {summary} Weights {weights}",
             "http_referer": "http://localhost",
             "app_title": "App",
         },
@@ -349,10 +363,20 @@ def test_run_dashboard_prompt_flow(monkeypatch):
     st = DummyStreamlit(sidebar, chat_input_value="prompt")
     monkeypatch.setattr("src.dashboard.st", st)
 
-    monkeypatch.setattr("src.dashboard.create_openrouter_client", lambda **_kwargs: DummyClient("AAPL, MSFT"))
+    monkeypatch.setattr(
+        "src.dashboard.create_openrouter_client",
+        lambda **_kwargs: DummyClient(
+            [
+                "AAPL, MSFT",
+                '{"weights": {"AAPL": 0.6, "MSFT": 0.4}}',
+                "analysis",
+            ]
+        ),
+    )
     monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
     monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
     monkeypatch.setattr("src.dashboard.plot_recommendations", lambda *_args, **_kwargs: "recommendations")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
     monkeypatch.setattr(
         "src.dashboard.fetch_stock_data",
         lambda *_args, **_kwargs: {
@@ -366,7 +390,7 @@ def test_run_dashboard_prompt_flow(monkeypatch):
     run_dashboard(_base_config(api_key="key"))
 
     assert sidebar.write_args == ("Suggested", ["AAPL", "MSFT"])
-    assert len(st.subheaders) == 4
+    assert len(st.tabs_created) == 4
     assert len(st.dataframes) == 0
     assert len(st.download_buttons) == 6
-    assert len(st.plots) == 5
+    assert len(st.plots) == 6

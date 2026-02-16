@@ -140,3 +140,25 @@ def plot_recommendations(
     fig.update_layout(title=title)
     _apply_gridlines(fig)
     return fig
+
+
+def plot_portfolio_returns(portfolio_series: pd.Series, title: str) -> Optional[Figure]:
+    if portfolio_series is None or portfolio_series.empty:
+        return None
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=portfolio_series.index,
+            y=portfolio_series.values,
+            mode="lines",
+            name="Portfolio",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Date",
+        yaxis_title="Growth of $1",
+    )
+    _apply_gridlines(fig)
+    return fig

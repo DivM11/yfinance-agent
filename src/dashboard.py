@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
@@ -9,9 +10,14 @@ import yfinance as yf
 import pandas as pd
 from openai import OpenAI
 
-from src.plots import plot_financials, plot_history, plot_recommendations
-from src.portfolio import allocate_portfolio, format_portfolio_allocation
-from src.summaries import build_portfolio_summary
+from src.plots import plot_financials, plot_history, plot_portfolio_returns, plot_recommendations
+from src.portfolio import allocate_portfolio_by_weights, format_portfolio_allocation, normalize_weights
+from src.summaries import (
+    build_portfolio_returns_series,
+    build_portfolio_summary,
+    summarize_portfolio_financials,
+    summarize_portfolio_stats,
+)
 
 
 def create_openrouter_client(
@@ -99,14 +105,40 @@ def _df_to_csv_bytes(df: pd.DataFrame) -> bytes:
     return df.to_csv().encode("utf-8")
 
 
-def _init_state(default_user_input: str, default_portfolio_size: float) -> None:
+def _init_state(default_user_input: str, default_portfolio_size: float, chat_intro: str) -> None:
     state = st.session_state
-    state.setdefault("messages", [])
+    state.setdefault("messages", [{"role": "assistant", "content": chat_intro}])
     state.setdefault("user_input", default_user_input)
     state.setdefault("tickers", [])
     state.setdefault("data_by_ticker", {})
     state.setdefault("selected_history_tickers", [])
     state.setdefault("portfolio_size", default_portfolio_size)
+    state.setdefault("weights", {})
+    state.setdefault("portfolio_allocation", {})
+    state.setdefault("portfolio_stats", {})
+    state.setdefault("portfolio_financials", {})
+    state.setdefault("portfolio_series", pd.Series(dtype=float))
+    state.setdefault("analysis_text", "")
+
+
+def _parse_weights(text: str, tickers: List[str]) -> Dict[str, float]:
+    try:
+        payload = json.loads(text)
+    except json.JSONDecodeError:
+        return normalize_weights({}, tickers)
+
+    weights: Dict[str, float] = {}
+    if isinstance(payload, dict):
+        if "weights" in payload and isinstance(payload["weights"], dict):
+            weights = payload["weights"]
+        else:
+            weights = payload
+    elif isinstance(payload, list):
+        for item in payload:
+            if isinstance(item, dict) and "ticker" in item and "weight" in item:
+                weights[str(item["ticker"]).upper()] = float(item["weight"])
+
+    return normalize_weights(weights, tickers)
 
 
 def run_dashboard(config: Dict[str, Any]) -> None:
@@ -119,7 +151,11 @@ def run_dashboard(config: Dict[str, Any]) -> None:
     stocks_cfg = config["stocks"]
     recommendations_cfg = config["recommendations"]
 
-    _init_state(dashboard["default_user_input"], dashboard["default_portfolio_size"])
+    _init_state(
+        dashboard["default_user_input"],
+        dashboard["default_portfolio_size"],
+        ui["chat_intro"],
+    )
 
     st.sidebar.header(ui["sidebar_header"])
     st.sidebar.number_input(
@@ -187,16 +223,46 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             previous_period=recommendations_cfg["previous_period"],
         )
 
-        allocation = allocate_portfolio(
+        weights_prompt = openrouter_cfg["weights_prompt_template"].format(
+            user_input=prompt_input,
+            tickers=", ".join(tickers),
+            summary=summary_text,
+        )
+        weights_response = client.chat.completions.create(
+            model=openrouter_cfg["weights_model"],
+            max_tokens=openrouter_cfg["weights_max_tokens"],
+            temperature=openrouter_cfg["weights_temperature"],
+            messages=[
+                {"role": "system", "content": openrouter_cfg["weights_system_prompt"]},
+                {"role": "user", "content": weights_prompt},
+            ],
+        )
+        weights_text = _extract_message_text(weights_response)
+        weights = _parse_weights(weights_text, tickers)
+
+        allocation = allocate_portfolio_by_weights(
             tickers=tickers,
             total_amount=st.session_state["portfolio_size"],
+            weights=weights,
         )
         allocation_text = format_portfolio_allocation(allocation)
+
+        portfolio_series = build_portfolio_returns_series(
+            {ticker: data["history"] for ticker, data in data_by_ticker.items()},
+            weights,
+        )
+        portfolio_stats = summarize_portfolio_stats(portfolio_series)
+        portfolio_financials = summarize_portfolio_financials(
+            {ticker: data["financials"] for ticker, data in data_by_ticker.items()},
+            weights,
+            stocks_cfg["financials_metrics"],
+        )
 
         analysis_prompt = openrouter_cfg["analysis_prompt_template"].format(
             user_input=prompt_input,
             tickers=", ".join(tickers),
             portfolio_size=st.session_state["portfolio_size"],
+            weights=json.dumps(weights),
             summary=summary_text,
             allocation=allocation_text,
         )
@@ -211,12 +277,17 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         )
         analysis_text = _extract_message_text(analysis_response)
 
-        st.session_state["messages"].append({"role": "assistant", "content": allocation_text})
         st.session_state["messages"].append({"role": "assistant", "content": analysis_text})
 
         st.session_state["tickers"] = tickers
         st.session_state["data_by_ticker"] = data_by_ticker
         st.session_state["selected_history_tickers"] = tickers
+        st.session_state["weights"] = weights
+        st.session_state["portfolio_allocation"] = allocation
+        st.session_state["portfolio_stats"] = portfolio_stats
+        st.session_state["portfolio_financials"] = portfolio_financials
+        st.session_state["portfolio_series"] = portfolio_series
+        st.session_state["analysis_text"] = analysis_text
 
     tickers = st.session_state.get("tickers", [])
     if not tickers:
@@ -233,7 +304,14 @@ def run_dashboard(config: Dict[str, Any]) -> None:
     data_by_ticker = st.session_state.get("data_by_ticker", {})
 
     with plots_col:
-        tabs = st.tabs([ui["history_tab_label"], ui["financials_tab_label"], ui["recommendations_tab_label"]])
+        tabs = st.tabs(
+            [
+                ui["history_tab_label"],
+                ui["financials_tab_label"],
+                ui["recommendations_tab_label"],
+                ui["portfolio_tab_label"],
+            ]
+        )
 
         with tabs[0]:
             history_fig = plot_history(
@@ -297,3 +375,32 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                     file_name=f"{ticker}_recommendations.csv",
                     mime="text/csv",
                 )
+
+        with tabs[3]:
+            allocation = st.session_state.get("portfolio_allocation", {})
+            if allocation:
+                st.subheader(ui["portfolio_output_label"])
+                st.write(format_portfolio_allocation(allocation))
+
+            stats = st.session_state.get("portfolio_stats", {})
+            if stats:
+                st.subheader(ui["portfolio_stats_label"])
+                st.write(
+                    ui["portfolio_stats_template"].format(
+                        min=stats.get("min"),
+                        max=stats.get("max"),
+                        median=stats.get("median"),
+                        current=stats.get("current"),
+                        return_1y=stats.get("return_1y"),
+                    )
+                )
+
+            portfolio_series = st.session_state.get("portfolio_series", pd.Series(dtype=float))
+            returns_fig = plot_portfolio_returns(portfolio_series, ui["portfolio_returns_label"])
+            if returns_fig is not None:
+                st.plotly_chart(returns_fig, use_container_width=True)
+
+            portfolio_financials = st.session_state.get("portfolio_financials", {})
+            if portfolio_financials:
+                st.subheader(ui["portfolio_financials_label"])
+                st.dataframe(pd.DataFrame([portfolio_financials]))

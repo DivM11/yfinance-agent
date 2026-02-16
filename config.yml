@@ -11,6 +11,7 @@ ui:
   sidebar_header: "Portfolio Preferences"
   portfolio_size_label: "Portfolio Size ($)"
   chat_placeholder: "Describe your portfolio preferences"
+  chat_intro: "Tell me what kind of portfolio you want and I will build it."
   suggested_label: "Suggested Tickers:"
   ticker_header_template: "Data for {ticker}"
   section_history: "Historical Data:"
@@ -27,6 +28,12 @@ ui:
   history_tab_label: "Historical Prices"
   financials_tab_label: "Financials"
   recommendations_tab_label: "Recommendations"
+  portfolio_tab_label: "Portfolio"
+  portfolio_output_label: "Recommended Portfolio"
+  portfolio_stats_label: "Portfolio Stats"
+  portfolio_returns_label: "Portfolio Returns (1Y)"
+  portfolio_financials_label: "Portfolio Financials"
+  portfolio_stats_template: "Min {min:.2f} | Max {max:.2f} | Median {median:.2f} | Current {current:.2f} | 1Y Return {return_1y:.2%}"
 
 openrouter:
   base_url: "https://openrouter.ai/api/v1"
@@ -35,11 +42,16 @@ openrouter:
   temperature: 0.2
   system_prompt: "You are a financial assistant. Respond with a comma-separated list of US stock tickers only."
   prompt_template: "Suggest a list of US stock tickers for the following portfolio preferences: {user_input}"
+  weights_model: "openrouter/auto"
+  weights_max_tokens: 200
+  weights_temperature: 0.1
+  weights_system_prompt: "You are a portfolio allocator. Return JSON only."
+  weights_prompt_template: "Given the user preferences and ticker summary, return weights that sum to 1. Use JSON: {\"weights\": {\"TICKER\": 0.25}}.\nUser preferences: {user_input}\nTickers: {tickers}\nSummary:\n{summary}"
   analysis_model: "openrouter/auto"
   analysis_max_tokens: 300
   analysis_temperature: 0.2
   analysis_system_prompt: "You are a financial analyst. Provide a concise evaluation of the recommended tickers."
-  analysis_prompt_template: "User preferences: {user_input}\nPortfolio size: {portfolio_size}\nTickers: {tickers}\nAllocation: {allocation}\nSummary:\n{summary}\nProvide a brief evaluation and any risks."
+  analysis_prompt_template: "User preferences: {user_input}\nPortfolio size: {portfolio_size}\nTickers: {tickers}\nWeights: {weights}\nAllocation: {allocation}\nSummary:\n{summary}\nProvide a brief evaluation and any risks."
   http_referer: "http://localhost:8501"
   app_title: "YFinance Agent"
 

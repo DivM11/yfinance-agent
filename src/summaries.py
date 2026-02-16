@@ -7,6 +7,7 @@ from typing import Dict, Iterable
 import pandas as pd
 
 from src.recommendations import summarize_recommendations_counts as _summarize_counts
+from src.portfolio import normalize_weights
 
 
 def summarize_history_stats(history: pd.DataFrame) -> Dict[str, float]:
@@ -112,3 +113,62 @@ def build_portfolio_summary(
             )
         )
     return "\n".join(summaries)
+
+
+def build_portfolio_returns_series(
+    history_by_ticker: Dict[str, pd.DataFrame],
+    weights: Dict[str, float] | None,
+) -> pd.Series:
+    closes = {}
+    for ticker, data in history_by_ticker.items():
+        if data is None or data.empty or "Close" not in data.columns:
+            continue
+        closes[ticker] = data["Close"].rename(ticker)
+
+    if not closes:
+        return pd.Series(dtype=float)
+
+    prices = pd.concat(closes.values(), axis=1, join="inner").dropna(how="all")
+    if prices.empty:
+        return pd.Series(dtype=float)
+
+    normalized = normalize_weights(weights, prices.columns)
+    returns = prices.pct_change().fillna(0)
+    weighted = sum(returns[col] * normalized.get(col, 0.0) for col in prices.columns)
+    series = (1 + weighted).cumprod()
+    series.name = "Portfolio"
+    return series
+
+
+def summarize_portfolio_stats(portfolio_series: pd.Series) -> Dict[str, float]:
+    if portfolio_series is None or portfolio_series.empty:
+        return {}
+
+    return {
+        "min": float(portfolio_series.min()),
+        "max": float(portfolio_series.max()),
+        "median": float(portfolio_series.median()),
+        "current": float(portfolio_series.iloc[-1]),
+        "return_1y": float(portfolio_series.iloc[-1] - 1.0),
+    }
+
+
+def summarize_portfolio_financials(
+    financials_by_ticker: Dict[str, pd.DataFrame],
+    weights: Dict[str, float] | None,
+    metrics: Iterable[str],
+) -> Dict[str, float]:
+    if not financials_by_ticker:
+        return {}
+
+    normalized = normalize_weights(weights, financials_by_ticker.keys())
+    totals: Dict[str, float] = {}
+    for ticker, financials in financials_by_ticker.items():
+        weight = normalized.get(ticker, 0.0)
+        if weight <= 0:
+            continue
+        summary = summarize_financials_latest(financials, metrics)
+        for metric, value in summary.items():
+            totals[metric] = totals.get(metric, 0.0) + value * weight
+
+    return totals
