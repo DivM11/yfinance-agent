@@ -119,11 +119,39 @@ def _normalize_recommendation_columns(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
+def _normalize_period_index(df: pd.DataFrame) -> pd.DataFrame:
+    if df is None or df.empty:
+        return pd.DataFrame()
+
+    normalized = df.copy()
+    if "period" in normalized.columns:
+        normalized["period"] = normalized["period"].astype(str)
+        normalized = normalized.set_index("period")
+
+    normalized.index = normalized.index.astype(str).str.strip().str.lower()
+    return normalized
+
+
+def _normalize_period_value(value: str) -> str:
+    return str(value).strip().lower()
+
+
+def _period_candidates(period: str) -> List[str]:
+    normalized = _normalize_period_value(period)
+    candidates = [normalized]
+    if normalized.startswith("-"):
+        candidates.append(normalized[1:])
+    elif normalized and normalized != "0m":
+        candidates.append(f"-{normalized}")
+    return list(dict.fromkeys(candidates))
+
+
 def _extract_period_row(df: pd.DataFrame, period: str) -> Optional[pd.Series]:
     if df is None or df.empty:
         return None
-    if period in df.index:
-        return df.loc[period]
+    for candidate in _period_candidates(period):
+        if candidate in df.index:
+            return df.loc[candidate]
     return None
 
 
@@ -138,7 +166,7 @@ def plot_recommendations(
         return None
 
     summary = _normalize_recommendation_columns(summary)
-    summary = summary.set_index(summary.index.astype(str))
+    summary = _normalize_period_index(summary)
 
     current = _extract_period_row(summary, current_period)
     previous = _extract_period_row(summary, previous_period)

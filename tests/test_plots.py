@@ -53,6 +53,24 @@ def test_plot_recommendations_current_and_delta():
     assert len(fig.data) == 2
 
 
+def test_plot_recommendations_period_column_and_negative_periods():
+    summary = pd.DataFrame(
+        {
+            "period": ["0m", "-1m"],
+            "strongBuy": [2, 1],
+            "buy": [4, 3],
+            "hold": [6, 5],
+            "sell": [1, 1],
+            "strongSell": [0, 1],
+        }
+    )
+
+    fig = plot_recommendations(summary, current_period="0m", previous_period="1m", title="Rec")
+
+    assert fig is not None
+    assert len(fig.data) == 2
+
+
 def test_plot_recommendations_missing_current():
     summary = pd.DataFrame({"Buy": [1]}, index=["1m"])
 
