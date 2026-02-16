@@ -188,7 +188,7 @@ def plot_recommendations(
         row=1,
         col=1,
     )
-    fig.update_yaxes(title_text="Count", row=1, col=1)
+    fig.update_yaxes(title_text="Analyst recommendations", row=1, col=1)
 
     if delta_vals is not None:
         fig.add_trace(
@@ -196,12 +196,8 @@ def plot_recommendations(
             row=2,
             col=1,
         )
-        fig.update_yaxes(title_text="Delta", row=2, col=1)
+        fig.update_yaxes(title_text="Change in past month", row=2, col=1)
 
-    fig.update_xaxes(title_text="Rating", row=1, col=1)
-    if delta_vals is not None:
-        fig.update_xaxes(title_text="Rating", row=2, col=1)
-
-    fig.update_layout(title=f"{title} (Current {current_period})")
+    fig.update_layout(title=title)
     _apply_gridlines(fig)
     return fig
