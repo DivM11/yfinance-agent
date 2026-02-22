@@ -9,7 +9,7 @@ package-mode = false # Using Poetry for dependency management only, not for pack
 [tool.poetry.dependencies]
 python = "^3.11"
 streamlit = "*"
-yfinance = "*"
+yfinance = "0.2.54"
 openai = "*"
 openrouter = "*"
 pandas = "*"
