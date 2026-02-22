@@ -10,7 +10,9 @@ def _write_config(root: Path) -> None:
         "app:\n"
         "  layout: \"wide\"\n"
         "openrouter:\n"
-        "  model: \"openrouter/auto\"\n"
+        "  api:\n"
+        "    key_env_var: \"OPENROUTER_API_KEY\"\n"
+        "    base_url: \"https://openrouter.ai/api/v1\"\n"
     )
     (root / "config.yml").write_text(config_text, encoding="utf-8")
 
@@ -22,7 +24,7 @@ def test_load_config_without_secrets(monkeypatch, tmp_path: Path) -> None:
     config = load_config(base_path=tmp_path)
 
     assert config["app"]["layout"] == "wide"
-    assert "api_key" not in config.get("openrouter", {})
+    assert "api_key" not in config.get("openrouter", {}).get("api", {})
 
 
 def test_load_config_with_dotenv(monkeypatch, tmp_path: Path) -> None:
@@ -32,4 +34,4 @@ def test_load_config_with_dotenv(monkeypatch, tmp_path: Path) -> None:
 
     config = load_config(base_path=tmp_path)
 
-    assert config["openrouter"]["api_key"] == "test-key"
+    assert config["openrouter"]["api"]["api_key"] == "test-key"

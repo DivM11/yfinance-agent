@@ -17,11 +17,15 @@ from src.dashboard import (
 class DummyTicker:
     """Minimal stub for yfinance.Ticker."""
 
-    def history(self, period: str) -> pd.DataFrame:
+    def history(self, period: str | None = None) -> pd.DataFrame:
         return pd.DataFrame({"price": [1, 2, 3]})
 
     @property
     def financials(self) -> pd.DataFrame:
+        return pd.DataFrame({"metric": ["revenue"]})
+
+    @property
+    def quarterly_financials(self) -> pd.DataFrame:
         return pd.DataFrame({"metric": ["revenue"]})
 
     @property
@@ -81,7 +85,7 @@ class DummyClient:
 
 class DummySidebar:
     def __init__(self) -> None:
-        self.session_state = None
+        self.session_state: dict | None = None
         self.header_text = None
         self.multiselect_args = None
         self.number_input_args = None
@@ -177,7 +181,7 @@ class DummyStreamlit:
     def caption(self, text: str) -> None:
         self.captions.append(text)
 
-    def columns(self, _spec, gap: str | None = None):
+    def columns(self, _spec, _gap: str | None = None):
         return [DummyContainer(), DummyContainer()]
 
     def tabs(self, labels):
@@ -207,7 +211,7 @@ def test_parse_tickers():
 
 def test_generate_tickers():
     client = DummyClient("AAPL, MSFT")
-    tickers = generate_tickers(
+    tickers, raw = generate_tickers(
         client=client,
         prompt="test",
         system_prompt="system",
@@ -216,6 +220,7 @@ def test_generate_tickers():
         temperature=0.1,
         delimiter=",")
     assert tickers == ["AAPL", "MSFT"]
+    assert raw == "AAPL, MSFT"
 
 
 def test_fetch_stock_data(monkeypatch):
@@ -274,6 +279,16 @@ def _base_config(api_key: str | None) -> dict:
             "portfolio_size_label": "Portfolio Size ($)",
             "chat_placeholder": "Chat",
             "chat_intro": "Intro",
+            "chat_tab_label": "Chat",
+            "ticker_reply_template": "Suggested tickers: {tickers}",
+            "ticker_validation_error": "No valid tickers found.",
+            "weights_validation_warning": "Bad weights total: {total}",
+            "weights_fallback_message": "Weights invalid ({total}) using equal weights.",
+            "history_empty_message": "History empty",
+            "financials_empty_message": "Financials empty",
+            "recommendations_empty_message": "Recommendations empty",
+            "portfolio_empty_message": "Portfolio empty",
+            "post_analysis_nudge": "Check other tabs",
             "suggested_label": "Suggested",
             "ticker_header_template": "Data for {ticker}",
             "section_history": "History",
@@ -303,25 +318,35 @@ def _base_config(api_key: str | None) -> dict:
             "ticker_delimiter": ",",
         },
         "openrouter": {
-            "api_key": api_key,
-            "base_url": "https://example.com",
-            "model": "model",
-            "max_tokens": 5,
-            "temperature": 0.1,
-            "system_prompt": "system",
-            "prompt_template": "Prompt {user_input}",
-            "weights_model": "model",
-            "weights_max_tokens": 5,
-            "weights_temperature": 0.1,
-            "weights_system_prompt": "weights",
-            "weights_prompt_template": "Weights {summary}",
-            "analysis_model": "model",
-            "analysis_max_tokens": 5,
-            "analysis_temperature": 0.1,
-            "analysis_system_prompt": "analysis",
-            "analysis_prompt_template": "Summary {summary} Weights {weights}",
-            "http_referer": "http://localhost",
-            "app_title": "App",
+            "api": {
+                "api_key": api_key,
+                "base_url": "https://example.com",
+                "http_referer": "http://localhost",
+                "app_title": "App",
+            },
+            "models": {
+                "ticker": "model",
+                "weights": "model",
+                "analysis": "model",
+            },
+            "outputs": {
+                "ticker_max_tokens": 5,
+                "weights_max_tokens": 5,
+                "analysis_max_tokens": 500,
+            },
+            "temperatures": {
+                "ticker": 0.1,
+                "weights": 0.1,
+                "analysis": 0.1,
+            },
+            "prompts": {
+                "ticker_system": "system",
+                "ticker_template": "Prompt {user_input}",
+                "weights_system": "weights",
+                "weights_template": "Weights {summary}",
+                "analysis_system": "analysis",
+                "analysis_template": "Summary {summary} Weights {weights}",
+            },
         },
         "stocks": {
             "history_period": "1y",
@@ -390,7 +415,73 @@ def test_run_dashboard_prompt_flow(monkeypatch):
     run_dashboard(_base_config(api_key="key"))
 
     assert sidebar.write_args == ("Suggested", ["AAPL", "MSFT"])
-    assert len(st.tabs_created) == 4
+    assert len(st.tabs_created) == 5
     assert len(st.dataframes) == 0
     assert len(st.download_buttons) == 6
     assert len(st.plots) == 6
+    assert "Suggested tickers: AAPL, MSFT" in st.markdowns
+    assert "analysis" in st.markdowns
+    assert "Check other tabs" in st.markdowns
+
+
+def test_run_dashboard_invalid_ticker_output(monkeypatch, caplog):
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value="prompt")
+    monkeypatch.setattr("src.dashboard.st", st)
+
+    monkeypatch.setattr(
+        "src.dashboard.create_openrouter_client",
+        lambda **_kwargs: DummyClient(["??? , ###"]),
+    )
+
+    run_dashboard(_base_config(api_key="key"))
+
+    assert "No valid tickers found." in st.markdowns
+    assert "Raw model output from OpenRouter: ??? , ###" in caplog.text
+
+
+def test_run_dashboard_invalid_weights_fallback(monkeypatch):
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value="prompt")
+    monkeypatch.setattr("src.dashboard.st", st)
+
+    monkeypatch.setattr(
+        "src.dashboard.create_openrouter_client",
+        lambda **_kwargs: DummyClient(
+            [
+                "AAPL, MSFT",
+                '{"weights": {"AAPL": 0.9, "MSFT": 0.5}}',
+                "analysis",
+            ]
+        ),
+    )
+    monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
+    monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
+    monkeypatch.setattr("src.dashboard.plot_recommendations", lambda *_args, **_kwargs: "recommendations")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
+    monkeypatch.setattr(
+        "src.dashboard.fetch_stock_data",
+        lambda *_args, **_kwargs: {
+            "history": pd.DataFrame({"price": [1]}),
+            "financials": pd.DataFrame({"metric": ["rev"]}),
+            "recommendations": pd.DataFrame({"grade": ["buy"]}),
+            "recommendations_summary": pd.DataFrame({"buy": [1]}, index=["0m"]),
+        },
+    )
+
+    run_dashboard(_base_config(api_key="key"))
+
+    assert sidebar.warning_msg == "Bad weights total: 1.4"
+
+
+def test_run_dashboard_tabs_show_empty_states_without_tickers(monkeypatch):
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value=None)
+    monkeypatch.setattr("src.dashboard.st", st)
+
+    run_dashboard(_base_config(api_key="key"))
+
+    assert "History empty" in st.infos
+    assert "Financials empty" in st.infos
+    assert "Recommendations empty" in st.infos
+    assert "Portfolio empty" in st.infos

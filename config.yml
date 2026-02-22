@@ -12,6 +12,7 @@ ui:
   portfolio_size_label: "Portfolio Size ($)"
   chat_placeholder: "Describe your portfolio preferences"
   chat_intro: "Tell me what kind of portfolio you want and I will build it."
+  chat_tab_label: "Chat"
   suggested_label: "Suggested Tickers:"
   ticker_header_template: "Data for {ticker}"
   section_history: "Historical Data:"
@@ -23,12 +24,21 @@ ui:
   download_recommendations_label: "Recommendations CSV"
   missing_api_key: "Missing OpenRouter API key. Set OPENROUTER_API_KEY in .env."
   max_tickers_warning: "Limiting to {max_tickers} tickers for analysis."
+  ticker_reply_template: "I found these tickers for your request: {tickers}"
+  ticker_validation_error: "I could not find valid ticker symbols from the model output. Please try rephrasing your request."
+  weights_validation_warning: "Model weights did not sum to 1 (sum={total:.3f}). Falling back to equal weights."
+  weights_fallback_message: "The model returned invalid weights (sum={total:.3f}), so I used equal weights across the selected tickers."
   history_ticker_label: "Tickers to plot (history)"
   recommendations_missing: "Recommendations summary not available for {ticker}."
   history_tab_label: "Historical Prices"
   financials_tab_label: "Financials"
   recommendations_tab_label: "Recommendations"
   portfolio_tab_label: "Portfolio"
+  history_empty_message: "Historical Prices will appear here after ticker analysis is complete."
+  financials_empty_message: "Financials will appear here after ticker analysis is complete."
+  recommendations_empty_message: "Recommendations will appear here after ticker analysis is complete."
+  portfolio_empty_message: "Portfolio allocation and metrics will appear here after analysis is complete."
+  post_analysis_nudge: "Analysis is ready. Check Historical Prices, Financials, Recommendations, and Portfolio tabs for detailed views."
   portfolio_output_label: "Recommended Portfolio"
   portfolio_stats_label: "Portfolio Stats"
   portfolio_returns_label: "Portfolio Returns (1Y)"
@@ -36,24 +46,34 @@ ui:
   portfolio_stats_template: "Min {min:.2f} | Max {max:.2f} | Median {median:.2f} | Current {current:.2f} | 1Y Return {return_1y:.2%}"
 
 openrouter:
-  base_url: "https://openrouter.ai/api/v1"
-  model: "openrouter/auto"
-  max_tokens: 100
-  temperature: 0.2
-  system_prompt: "You are a financial assistant. Respond with a comma-separated list of US stock tickers only."
-  prompt_template: "Suggest a list of US stock tickers for the following portfolio preferences: {user_input}"
-  weights_model: "openrouter/auto"
-  weights_max_tokens: 200
-  weights_temperature: 0.1
-  weights_system_prompt: "You are a portfolio allocator. Return JSON only."
-  weights_prompt_template: "Given the user preferences and ticker summary, return weights that sum to 1. Use JSON: {{\"weights\": {{\"TICKER\": 0.25}}}}.\nUser preferences: {user_input}\nTickers: {tickers}\nSummary:\n{summary}"
-  analysis_model: "openrouter/auto"
-  analysis_max_tokens: 300
-  analysis_temperature: 0.2
-  analysis_system_prompt: "You are a financial analyst. Provide a concise evaluation of the recommended tickers."
-  analysis_prompt_template: "User preferences: {user_input}\nPortfolio size: {portfolio_size}\nTickers: {tickers}\nWeights: {weights}\nAllocation: {allocation}\nSummary:\n{summary}\nProvide a brief evaluation and any risks."
-  http_referer: "http://localhost:8501"
-  app_title: "YFinance Agent"
+  api:
+    base_url: "https://openrouter.ai/api/v1"
+    key_env_var: "OPENROUTER_API_KEY"
+    http_referer: "http://localhost:8501"
+    app_title: "YFinance Agent"
+
+  models:
+    ticker: "google/gemini-2.5-flash-lite"
+    weights: "google/gemini-2.5-flash-lite"
+    analysis: "google/gemini-2.5-flash-lite"
+
+  outputs:
+    ticker_max_tokens: 100
+    weights_max_tokens: 200
+    analysis_max_tokens: 500
+
+  temperatures:
+    ticker: 0.2
+    weights: 0.1
+    analysis: 0.2
+
+  prompts:
+    ticker_system: "You are a financial assistant. Respond with a comma-separated list of US stock tickers only."
+    ticker_template: "Suggest a list of US stock tickers for the following portfolio preferences: {user_input}"
+    weights_system: "You are a portfolio allocator. Return JSON only."
+    weights_template: "Given the user preferences and ticker summary, return weights that sum to 1. Use JSON: {{\"weights\": {{\"TICKER\": 0.25}}}}.\nUser preferences: {user_input}\nTickers: {tickers}\nSummary:\n{summary}"
+    analysis_system: "You are a financial analyst. Provide a concise evaluation of the recommended tickers."
+    analysis_template: "User preferences: {user_input}\nPortfolio size: {portfolio_size}\nTickers: {tickers}\nWeights: {weights}\nAllocation: {allocation}\nSummary:\n{summary}\nProvide a brief evaluation and any risks."
 
 stocks:
   history_period: "1y"

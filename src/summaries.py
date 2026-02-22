@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import json
 from typing import Dict, Iterable
 
 import pandas as pd
 
 from src.recommendations import summarize_recommendations_counts as _summarize_counts
 from src.portfolio import normalize_weights
+
+
+def _compact_number(value: float) -> str:
+    absolute = abs(value)
+    if absolute >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.2f}B"
+    if absolute >= 1_000_000:
+        return f"{value / 1_000_000:.2f}M"
+    if absolute >= 1_000:
+        return f"{value / 1_000:.2f}K"
+    return f"{value:.2f}"
 
 
 def summarize_history_stats(history: pd.DataFrame) -> Dict[str, float]:
@@ -62,21 +74,23 @@ def build_ticker_summary(
     current_period: str,
     previous_period: str,
 ) -> str:
-    parts = [ticker]
+    payload: Dict[str, object] = {"t": ticker}
 
     history_stats = summarize_history_stats(data.get("history", pd.DataFrame()))
     if history_stats:
-        parts.append(
-            "price min {min} max {max} med {median} current {current}".format(**history_stats)
-        )
+        payload["p"] = {
+            "min": _compact_number(history_stats["min"]),
+            "max": _compact_number(history_stats["max"]),
+            "med": _compact_number(history_stats["median"]),
+            "cur": _compact_number(history_stats["current"]),
+        }
 
     financials_summary = summarize_financials_latest(
         data.get("financials", pd.DataFrame()),
         financial_metrics,
     )
     if financials_summary:
-        fin_parts = " ".join(f"{key} {value}" for key, value in financials_summary.items())
-        parts.append(f"fin {fin_parts}")
+        payload["f"] = {key: _compact_number(value) for key, value in financials_summary.items()}
 
     current, delta = summarize_recommendations_counts(
         data.get("recommendations_summary", pd.DataFrame()),
@@ -84,13 +98,11 @@ def build_ticker_summary(
         previous_period=previous_period,
     )
     if current:
-        cur_parts = " ".join(f"{key} {value}" for key, value in current.items())
-        parts.append(f"recs {cur_parts}")
+        payload["r"] = {key: int(value) for key, value in current.items()}
     if delta:
-        delta_parts = " ".join(f"{key} {value}" for key, value in delta.items())
-        parts.append(f"delta {delta_parts}")
+        payload["d"] = {key: int(value) for key, value in delta.items()}
 
-    return " | ".join(parts)
+    return json.dumps(payload, separators=(",", ":"))
 
 
 def build_portfolio_summary(

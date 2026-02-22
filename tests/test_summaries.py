@@ -67,8 +67,8 @@ def test_build_ticker_summary():
         previous_period="1m",
     )
 
-    assert "AAPL" in summary_text
-    assert "price" in summary_text.lower()
+    assert '"t":"AAPL"' in summary_text
+    assert '"p":' in summary_text
 
 
 def test_build_portfolio_returns_series():

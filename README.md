@@ -62,6 +62,11 @@ You can copy `.env.example` to get started:
 cp .env.example .env
 ```
 
+### OpenRouter Model Setup
+- The app uses `qwen/qwen3-32b-04-28:nitro` for ticker generation, weight generation, and analysis.
+- OpenRouter settings are grouped under `openrouter.api`, `openrouter.models`, `openrouter.outputs`, `openrouter.temperatures`, and `openrouter.prompts` in [config.yml](config.yml).
+- Set the API key via environment variable name specified in `openrouter.api.key_env_var` (default: `OPENROUTER_API_KEY`).
+
 ## Using Docker
 
 ### Build the Docker Image

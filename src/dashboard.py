@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import logging
+import re
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
@@ -10,6 +12,12 @@ import yfinance as yf
 import pandas as pd
 from openai import OpenAI
 
+from src.llm_validation import (
+    extract_valid_tickers,
+    has_valid_tickers,
+    parse_weights_payload,
+    validate_weight_sum,
+)
 from src.plots import plot_financials, plot_history, plot_portfolio_returns, plot_recommendations
 from src.portfolio import allocate_portfolio_by_weights, format_portfolio_allocation, normalize_weights
 from src.summaries import (
@@ -18,6 +26,77 @@ from src.summaries import (
     summarize_portfolio_financials,
     summarize_portfolio_stats,
 )
+
+
+logger = logging.getLogger(__name__)
+MODEL_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+(?::[a-zA-Z0-9_.-]+)?$")
+
+
+def _log_backend(message: str, *args: object) -> None:
+    logger.warning(message, *args)
+    try:
+        rendered = message % args if args else message
+    except Exception:
+        rendered = f"{message} | args={args}"
+    print(rendered, flush=True)
+
+
+def _is_model_name_valid(model_name: str) -> bool:
+    return bool(MODEL_NAME_PATTERN.match(model_name))
+
+
+def _create_openrouter_completion(
+    *,
+    client: OpenAI,
+    request_name: str,
+    model: str,
+    max_tokens: int,
+    temperature: float,
+    messages: List[Dict[str, str]],
+) -> tuple[Any, Optional[int]]:
+    model_valid = _is_model_name_valid(model)
+    _log_backend(
+        "[%s] OpenRouter request start model=%s valid_model_format=%s max_tokens=%s temperature=%s messages=%s",
+        request_name,
+        model,
+        model_valid,
+        max_tokens,
+        temperature,
+        len(messages),
+    )
+    if not model_valid:
+        _log_backend("[%s] Model name may be malformed: %s", request_name, model)
+
+    try:
+        raw_client = client.chat.completions.with_raw_response
+        raw_response = raw_client.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=messages,
+        )
+        status_code = getattr(raw_response, "status_code", None)
+        _log_backend(
+            "[%s] OpenRouter response received status_code=%s",
+            request_name,
+            status_code,
+        )
+        return raw_response.parse(), status_code
+    except AttributeError:
+        response = client.chat.completions.create(
+            model=model,
+            max_tokens=max_tokens,
+            temperature=temperature,
+            messages=messages,
+        )
+        _log_backend(
+            "[%s] OpenRouter response received status_code=unavailable",
+            request_name,
+        )
+        return response, None
+    except Exception:
+        logger.exception("[%s] OpenRouter request failed", request_name)
+        raise
 
 
 def create_openrouter_client(
@@ -36,7 +115,7 @@ def build_prompt(template: str, user_input: str) -> str:
 
 def parse_tickers(text: str, delimiter: str) -> List[str]:
     """Parse a delimited ticker list into clean symbols."""
-    return [item.strip().upper() for item in text.split(delimiter) if item.strip()]
+    return extract_valid_tickers(text, delimiter=delimiter)
 
 
 def fetch_stock_data(
@@ -80,9 +159,11 @@ def generate_tickers(
     max_tokens: int,
     temperature: float,
     delimiter: str,
-) -> List[str]:
-    """Generate ticker suggestions from the LLM."""
-    response = client.chat.completions.create(
+) -> tuple[List[str], str]:
+    """Generate ticker suggestions from the LLM and return parsed + raw output."""
+    response, _status_code = _create_openrouter_completion(
+        client=client,
+        request_name="ticker_generation",
         model=model,
         max_tokens=max_tokens,
         temperature=temperature,
@@ -91,7 +172,8 @@ def generate_tickers(
             {"role": "user", "content": prompt},
         ],
     )
-    return parse_tickers(_extract_message_text(response), delimiter=delimiter)
+    raw_output = _extract_message_text(response)
+    return parse_tickers(raw_output, delimiter=delimiter), raw_output
 
 
 def limit_tickers(tickers: List[str], max_tickers: int) -> List[str]:
@@ -121,24 +203,11 @@ def _init_state(default_user_input: str, default_portfolio_size: float, chat_int
     state.setdefault("analysis_text", "")
 
 
-def _parse_weights(text: str, tickers: List[str]) -> Dict[str, float]:
-    try:
-        payload = json.loads(text)
-    except json.JSONDecodeError:
-        return normalize_weights({}, tickers)
-
-    weights: Dict[str, float] = {}
-    if isinstance(payload, dict):
-        if "weights" in payload and isinstance(payload["weights"], dict):
-            weights = payload["weights"]
-        else:
-            weights = payload
-    elif isinstance(payload, list):
-        for item in payload:
-            if isinstance(item, dict) and "ticker" in item and "weight" in item:
-                weights[str(item["ticker"]).upper()] = float(item["weight"])
-
-    return normalize_weights(weights, tickers)
+def _push_chat_message(role: str, content: str, container) -> None:
+    st.session_state["messages"].append({"role": role, "content": content})
+    with container:
+        with st.chat_message(role):
+            st.markdown(content)
 
 
 def run_dashboard(config: Dict[str, Any]) -> None:
@@ -165,14 +234,29 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         key="portfolio_size",
     )
 
-    api_key = openrouter_cfg.get("api_key")
+    api_cfg = openrouter_cfg["api"]
+    models_cfg = openrouter_cfg["models"]
+    outputs_cfg = openrouter_cfg["outputs"]
+    temperatures_cfg = openrouter_cfg["temperatures"]
+    prompts_cfg = openrouter_cfg["prompts"]
+
+    api_key = api_cfg.get("api_key")
     if not api_key:
         st.sidebar.error(ui["missing_api_key"])
         return
 
-    chat_col, plots_col = st.columns([1, 1.4], gap="large")
+    tabs = st.tabs(
+        [
+            ui["chat_tab_label"],
+            ui["history_tab_label"],
+            ui["financials_tab_label"],
+            ui["recommendations_tab_label"],
+            ui["portfolio_tab_label"],
+        ]
+    )
+    chat_tab, history_tab, financials_tab, recommendations_tab, portfolio_tab = tabs
 
-    with chat_col:
+    with chat_tab:
         for message in st.session_state["messages"]:
             with st.chat_message(message["role"]):
                 st.markdown(message["content"])
@@ -180,25 +264,39 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         prompt_input = st.chat_input(ui["chat_placeholder"])
 
     if prompt_input:
-        st.session_state["messages"].append({"role": "user", "content": prompt_input})
-        prompt = build_prompt(openrouter_cfg["prompt_template"], prompt_input)
+        _push_chat_message("user", prompt_input, chat_tab)
         client = create_openrouter_client(
             api_key=api_key,
-            base_url=openrouter_cfg["base_url"],
+            base_url=api_cfg["base_url"],
             headers={
-                "HTTP-Referer": openrouter_cfg["http_referer"],
-                "X-Title": openrouter_cfg["app_title"],
+                "HTTP-Referer": api_cfg["http_referer"],
+                "X-Title": api_cfg["app_title"],
             },
         )
-        tickers = generate_tickers(
+
+        prompt = build_prompt(prompts_cfg["ticker_template"], prompt_input)
+        tickers, ticker_raw_output = generate_tickers(
             client=client,
             prompt=prompt,
-            system_prompt=openrouter_cfg["system_prompt"],
-            model=openrouter_cfg["model"],
-            max_tokens=openrouter_cfg["max_tokens"],
-            temperature=openrouter_cfg["temperature"],
+            system_prompt=prompts_cfg["ticker_system"],
+            model=models_cfg["ticker"],
+            max_tokens=outputs_cfg["ticker_max_tokens"],
+            temperature=temperatures_cfg["ticker"],
             delimiter=dashboard["ticker_delimiter"],
         )
+
+        if not has_valid_tickers(tickers):
+            _log_backend(
+                "Ticker validation failed. Raw model output from OpenRouter: %s",
+                ticker_raw_output,
+            )
+            _log_backend(
+                "Ticker validation failed details: output_len=%s output_repr=%r",
+                len(ticker_raw_output or ""),
+                ticker_raw_output,
+            )
+            _push_chat_message("assistant", ui["ticker_validation_error"], chat_tab)
+            return
 
         limited_tickers = limit_tickers(tickers, stocks_cfg["max_tickers"])
         if len(limited_tickers) < len(tickers):
@@ -206,6 +304,11 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                 ui["max_tickers_warning"].format(max_tickers=stocks_cfg["max_tickers"])
             )
         tickers = limited_tickers
+        _push_chat_message(
+            "assistant",
+            ui["ticker_reply_template"].format(tickers=", ".join(tickers)),
+            chat_tab,
+        )
 
         data_by_ticker: Dict[str, Dict[str, Any]] = {}
         for ticker in tickers:
@@ -223,22 +326,35 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             previous_period=recommendations_cfg["previous_period"],
         )
 
-        weights_prompt = openrouter_cfg["weights_prompt_template"].format(
+        weights_prompt = prompts_cfg["weights_template"].format(
             user_input=prompt_input,
             tickers=", ".join(tickers),
             summary=summary_text,
         )
-        weights_response = client.chat.completions.create(
-            model=openrouter_cfg["weights_model"],
-            max_tokens=openrouter_cfg["weights_max_tokens"],
-            temperature=openrouter_cfg["weights_temperature"],
+        weights_response, _weights_status_code = _create_openrouter_completion(
+            client=client,
+            request_name="weights_generation",
+            model=models_cfg["weights"],
+            max_tokens=outputs_cfg["weights_max_tokens"],
+            temperature=temperatures_cfg["weights"],
             messages=[
-                {"role": "system", "content": openrouter_cfg["weights_system_prompt"]},
+                {"role": "system", "content": prompts_cfg["weights_system"]},
                 {"role": "user", "content": weights_prompt},
             ],
         )
         weights_text = _extract_message_text(weights_response)
-        weights = _parse_weights(weights_text, tickers)
+        parsed_weights = parse_weights_payload(weights_text)
+        is_valid_weight_sum, raw_weight_sum = validate_weight_sum(parsed_weights)
+        if not parsed_weights or not is_valid_weight_sum:
+            st.sidebar.warning(ui["weights_validation_warning"].format(total=raw_weight_sum))
+            _push_chat_message(
+                "assistant",
+                ui["weights_fallback_message"].format(total=raw_weight_sum),
+                chat_tab,
+            )
+            weights = normalize_weights({}, tickers)
+        else:
+            weights = normalize_weights(parsed_weights, tickers)
 
         allocation = allocate_portfolio_by_weights(
             tickers=tickers,
@@ -258,7 +374,7 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             stocks_cfg["financials_metrics"],
         )
 
-        analysis_prompt = openrouter_cfg["analysis_prompt_template"].format(
+        analysis_prompt = prompts_cfg["analysis_template"].format(
             user_input=prompt_input,
             tickers=", ".join(tickers),
             portfolio_size=st.session_state["portfolio_size"],
@@ -266,18 +382,20 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             summary=summary_text,
             allocation=allocation_text,
         )
-        analysis_response = client.chat.completions.create(
-            model=openrouter_cfg["analysis_model"],
-            max_tokens=openrouter_cfg["analysis_max_tokens"],
-            temperature=openrouter_cfg["analysis_temperature"],
+        analysis_response, _analysis_status_code = _create_openrouter_completion(
+            client=client,
+            request_name="analysis_generation",
+            model=models_cfg["analysis"],
+            max_tokens=outputs_cfg["analysis_max_tokens"],
+            temperature=temperatures_cfg["analysis"],
             messages=[
-                {"role": "system", "content": openrouter_cfg["analysis_system_prompt"]},
+                {"role": "system", "content": prompts_cfg["analysis_system"]},
                 {"role": "user", "content": analysis_prompt},
             ],
         )
         analysis_text = _extract_message_text(analysis_response)
-
-        st.session_state["messages"].append({"role": "assistant", "content": analysis_text})
+        _push_chat_message("assistant", analysis_text, chat_tab)
+        _push_chat_message("assistant", ui["post_analysis_nudge"], chat_tab)
 
         st.session_state["tickers"] = tickers
         st.session_state["data_by_ticker"] = data_by_ticker
@@ -290,30 +408,23 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         st.session_state["analysis_text"] = analysis_text
 
     tickers = st.session_state.get("tickers", [])
-    if not tickers:
-        return
-
     st.sidebar.write(ui["suggested_label"], tickers)
-    selected_history_tickers = st.sidebar.multiselect(
-        ui["history_ticker_label"],
-        options=tickers,
-        default=st.session_state.get("selected_history_tickers", tickers),
-        key="selected_history_tickers",
-    )
+    if tickers:
+        selected_history_tickers = st.sidebar.multiselect(
+            ui["history_ticker_label"],
+            options=tickers,
+            default=st.session_state.get("selected_history_tickers", tickers),
+            key="selected_history_tickers",
+        )
+    else:
+        selected_history_tickers = []
 
     data_by_ticker = st.session_state.get("data_by_ticker", {})
 
-    with plots_col:
-        tabs = st.tabs(
-            [
-                ui["history_tab_label"],
-                ui["financials_tab_label"],
-                ui["recommendations_tab_label"],
-                ui["portfolio_tab_label"],
-            ]
-        )
-
-        with tabs[0]:
+    with history_tab:
+        if not tickers:
+            st.info(ui["history_empty_message"])
+        else:
             history_fig = plot_history(
                 {ticker: data["history"] for ticker, data in data_by_ticker.items()},
                 selected_tickers=selected_history_tickers,
@@ -331,7 +442,10 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                     mime="text/csv",
                 )
 
-        with tabs[1]:
+    with financials_tab:
+        if not tickers:
+            st.info(ui["financials_empty_message"])
+        else:
             for ticker in tickers:
                 st.subheader(ui["ticker_header_template"].format(ticker=ticker))
                 data = data_by_ticker.get(ticker, {})
@@ -352,7 +466,10 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                     mime="text/csv",
                 )
 
-        with tabs[2]:
+    with recommendations_tab:
+        if not tickers:
+            st.info(ui["recommendations_empty_message"])
+        else:
             for ticker in tickers:
                 st.subheader(ui["ticker_header_template"].format(ticker=ticker))
                 data = data_by_ticker.get(ticker, {})
@@ -376,7 +493,10 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                     mime="text/csv",
                 )
 
-        with tabs[3]:
+    with portfolio_tab:
+        if not tickers:
+            st.info(ui["portfolio_empty_message"])
+        else:
             allocation = st.session_state.get("portfolio_allocation", {})
             if allocation:
                 st.subheader(ui["portfolio_output_label"])

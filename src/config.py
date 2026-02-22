@@ -18,9 +18,15 @@ def load_config(base_path: Path | None = None) -> Dict[str, Any]:
     config_path = root / "config.yml"
     config = OmegaConf.load(config_path)
 
-    api_key = os.getenv("OPENROUTER_API_KEY")
+    key_env_var = "OPENROUTER_API_KEY"
+    try:
+        key_env_var = config.openrouter.api.key_env_var
+    except (AttributeError, KeyError, TypeError):
+        pass
+
+    api_key = os.getenv(key_env_var)
     if api_key:
-        config.openrouter.api_key = api_key
+        config.openrouter.api.api_key = api_key
 
     OmegaConf.resolve(config)
     return OmegaConf.to_container(config, resolve=True)
