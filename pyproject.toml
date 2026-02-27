@@ -2,14 +2,14 @@
 [tool.poetry]
 name = "yfinance-agent"
 version = "0.1.0"
-description = "An AI-powered stock analysis dashboard using Streamlit, Yfinance, and OpenRouter."
+description = "An AI-powered stock analysis dashboard using Streamlit, Massive.com (Polygon.io), and OpenRouter."
 authors = ["Divyansh Tripathi <your-email@example.com>"]
 package-mode = false # Using Poetry for dependency management only, not for packaging or installing the project itself
 
 [tool.poetry.dependencies]
 python = "^3.11"
 streamlit = "*"
-yfinance = "0.2.54"
+massive = "*"
 openai = "*"
 openrouter = "*"
 pandas = "*"

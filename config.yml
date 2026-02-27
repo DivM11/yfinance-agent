@@ -2,6 +2,11 @@ app:
   title: "YFinance Agent Dashboard"
   layout: "wide"
 
+massive:
+  api:
+    key_env_var: "MASSIVE_API_KEY"
+    # api_key is loaded from environment at runtime
+
 dashboard:
   default_user_input: "I want a tech-focused growth portfolio."
   default_portfolio_size: 1000.0
@@ -23,6 +28,7 @@ ui:
   download_financials_label: "Financials CSV"
   download_recommendations_label: "Recommendations CSV"
   missing_api_key: "Missing OpenRouter API key. Set OPENROUTER_API_KEY in .env."
+  missing_massive_key: "Missing Massive.com API key. Set MASSIVE_API_KEY in .env."
   max_tickers_warning: "Limiting to {max_tickers} tickers for analysis."
   ticker_reply_template: "I found these tickers for your request: {tickers}"
   ticker_validation_error: "I could not find valid ticker symbols from the model output. Please try rephrasing your request."

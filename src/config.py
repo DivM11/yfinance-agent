@@ -28,5 +28,25 @@ def load_config(base_path: Path | None = None) -> Dict[str, Any]:
     if api_key:
         config.openrouter.api.api_key = api_key
 
+    # Massive.com (formerly Polygon.io) API key
+    massive_key_env_var = "MASSIVE_API_KEY"
+    try:
+        massive_key_env_var = config.massive.api.key_env_var
+    except (AttributeError, KeyError, TypeError):
+        pass
+
+    massive_api_key = os.getenv(massive_key_env_var)
+    if massive_api_key:
+        try:
+            config.massive.api.api_key = massive_api_key
+        except (AttributeError, KeyError, TypeError):
+            from omegaconf import DictConfig
+            if not hasattr(config, "massive"):
+                config.massive = DictConfig({"api": {"api_key": massive_api_key, "key_env_var": massive_key_env_var}})
+            elif not hasattr(config.massive, "api"):
+                config.massive.api = DictConfig({"api_key": massive_api_key, "key_env_var": massive_key_env_var})
+            else:
+                config.massive.api.api_key = massive_api_key
+
     OmegaConf.resolve(config)
     return OmegaConf.to_container(config, resolve=True)

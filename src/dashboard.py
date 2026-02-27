@@ -1,4 +1,9 @@
-"""Dashboard module for the YFinance Agent application."""
+"""Dashboard module for the YFinance Agent application.
+
+Data is fetched from Massive.com (formerly Polygon.io) via the ``massive``
+Python SDK.  Analyst recommendation data is NOT available from Massive.com;
+the Recommendations tab will show an informational message instead.
+"""
 
 from __future__ import annotations
 
@@ -8,10 +13,13 @@ import re
 from typing import Any, Dict, List, Optional
 
 import streamlit as st
-import yfinance as yf
 import pandas as pd
 from openai import OpenAI
 
+from src.data_client import (
+    create_massive_client,
+    fetch_stock_data as _massive_fetch_stock_data,
+)
 from src.llm_validation import (
     extract_valid_tickers,
     has_valid_tickers,
@@ -122,25 +130,30 @@ def fetch_stock_data(
     ticker: str,
     history_period: str,
     financials_period: str,
+    massive_client: Any = None,
 ) -> Dict[str, Any]:
-    """Fetch stock data from YFinance."""
-    stock = yf.Ticker(ticker)
-    if financials_period == "quarterly":
-        financials = stock.quarterly_financials
-    else:
-        financials = stock.financials
+    """Fetch stock data from Massive.com (formerly Polygon.io).
 
-    try:
-        recommendations_summary = stock.recommendations_summary
-    except AttributeError:
-        recommendations_summary = pd.DataFrame()
-
-    return {
-        "history": stock.history(period=history_period),
-        "financials": financials,
-        "recommendations": stock.recommendations,
-        "recommendations_summary": recommendations_summary,
-    }
+    Parameters
+    ----------
+    ticker:
+        US equity symbol.
+    history_period:
+        Lookback period string (e.g. ``"1y"``).
+    financials_period:
+        ``"annual"`` or ``"quarterly"``.
+    massive_client:
+        An authenticated ``massive.RESTClient``.  If *None*, the caller must
+        have already ensured a client is available (used only in tests).
+    """
+    if massive_client is None:
+        raise ValueError("A Massive.com RESTClient must be provided.")
+    return _massive_fetch_stock_data(
+        client=massive_client,
+        ticker=ticker,
+        history_period=history_period,
+        financials_period=financials_period,
+    )
 
 
 def _extract_message_text(response: Any) -> str:
@@ -310,12 +323,19 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             chat_tab,
         )
 
+        massive_api_key = config.get("massive", {}).get("api", {}).get("api_key")
+        if not massive_api_key:
+            st.sidebar.error(ui.get("missing_massive_key", "Missing Massive.com API key. Set MASSIVE_API_KEY in .env."))
+            return
+        massive_client = create_massive_client(api_key=massive_api_key)
+
         data_by_ticker: Dict[str, Dict[str, Any]] = {}
         for ticker in tickers:
             data_by_ticker[ticker] = fetch_stock_data(
                 ticker,
                 history_period=stocks_cfg["history_period"],
                 financials_period=stocks_cfg["financials_period"],
+                massive_client=massive_client,
             )
 
         summary_text = build_portfolio_summary(

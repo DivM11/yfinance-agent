@@ -14,36 +14,74 @@ from src.dashboard import (
 )
 
 
-class DummyTicker:
-    """Minimal stub for yfinance.Ticker."""
+class DummyAgg:
+    """Minimal stub for a Massive.com Agg object."""
 
-    def history(self, period: str | None = None) -> pd.DataFrame:
-        return pd.DataFrame({"price": [1, 2, 3]})
+    def __init__(self, o, h, l, c, v, ts):  # noqa: E741
+        self.open = o
+        self.high = h
+        self.low = l
+        self.close = c
+        self.volume = v
+        self.timestamp = ts
 
-    @property
-    def financials(self) -> pd.DataFrame:
-        return pd.DataFrame({"metric": ["revenue"]})
 
-    @property
-    def quarterly_financials(self) -> pd.DataFrame:
-        return pd.DataFrame({"metric": ["revenue"]})
+class DummyMetricField:
+    """Stub for a financials metric field with a .value attribute."""
 
-    @property
-    def recommendations(self) -> pd.DataFrame:
-        return pd.DataFrame({"grade": ["buy"]})
+    def __init__(self, value):
+        self.value = value
 
-    @property
-    def recommendations_summary(self) -> pd.DataFrame:
-        return pd.DataFrame(
-            {
-                "strongBuy": [1, 2],
-                "buy": [3, 4],
-                "hold": [5, 6],
-                "sell": [1, 1],
-                "strongSell": [0, 1],
-            },
-            index=["0m", "1m"],
-        )
+    def get(self, key, default=None):
+        if key == "value":
+            return self.value
+        return default
+
+
+class DummyIncomeStatement:
+    def __init__(self):
+        self.revenues = DummyMetricField(1_000_000)
+        self.cost_of_revenue = DummyMetricField(500_000)
+        self.operating_income_loss = DummyMetricField(300_000)
+        self.net_income_loss = DummyMetricField(200_000)
+
+
+class DummyCashFlowStatement:
+    def __init__(self):
+        self.depreciation_and_amortization = DummyMetricField(50_000)
+
+
+class DummyFinancials:
+    def __init__(self):
+        self.income_statement = DummyIncomeStatement()
+        self.cash_flow_statement = DummyCashFlowStatement()
+
+
+class DummyStockFinancial:
+    def __init__(self, report_date="2025-12-31"):
+        self.period_of_report_date = report_date
+        self.financials = DummyFinancials()
+
+
+class DummyVx:
+    """Stub for client.vx namespace."""
+
+    def list_stock_financials(self, **_kwargs):
+        return [DummyStockFinancial("2025-12-31"), DummyStockFinancial("2025-09-30")]
+
+
+class DummyMassiveClient:
+    """Minimal stub for massive.RESTClient."""
+
+    def __init__(self):
+        self.vx = DummyVx()
+
+    def list_aggs(self, **_kwargs):
+        return [
+            DummyAgg(100, 105, 99, 102, 1000, 1700000000000),
+            DummyAgg(102, 106, 101, 104, 1200, 1700086400000),
+            DummyAgg(104, 108, 103, 107, 1100, 1700172800000),
+        ]
 
 
 class DummyMessage:
@@ -223,13 +261,10 @@ def test_generate_tickers():
     assert raw == "AAPL, MSFT"
 
 
-def test_fetch_stock_data(monkeypatch):
-    def fake_ticker(_symbol: str):
-        return DummyTicker()
+def test_fetch_stock_data():
+    client = DummyMassiveClient()
 
-    monkeypatch.setattr("src.dashboard.yf.Ticker", fake_ticker)
-
-    data = fetch_stock_data("AAPL", history_period="1y", financials_period="quarterly")
+    data = fetch_stock_data("AAPL", history_period="1y", financials_period="quarterly", massive_client=client)
 
     assert "history" in data
     assert "financials" in data
@@ -237,7 +272,9 @@ def test_fetch_stock_data(monkeypatch):
     assert "recommendations_summary" in data
     assert not data["history"].empty
     assert not data["financials"].empty
-    assert not data["recommendations"].empty
+    # Recommendations are empty (not available from Massive.com)
+    assert data["recommendations"].empty
+    assert data["recommendations_summary"].empty
 
 
 def test_limit_tickers():
@@ -355,6 +392,7 @@ def _base_config(api_key: str | None) -> dict:
             "financials_metrics": ["Total Revenue"],
         },
         "recommendations": {"current_period": "0m", "previous_period": "1m"},
+        "massive": {"api": {"api_key": "test-massive-key", "key_env_var": "MASSIVE_API_KEY"}},
     }
 
 
@@ -397,6 +435,10 @@ def test_run_dashboard_prompt_flow(monkeypatch):
                 "analysis",
             ]
         ),
+    )
+    monkeypatch.setattr(
+        "src.dashboard.create_massive_client",
+        lambda **_kwargs: DummyMassiveClient(),
     )
     monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
     monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
@@ -454,6 +496,10 @@ def test_run_dashboard_invalid_weights_fallback(monkeypatch):
                 "analysis",
             ]
         ),
+    )
+    monkeypatch.setattr(
+        "src.dashboard.create_massive_client",
+        lambda **_kwargs: DummyMassiveClient(),
     )
     monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
     monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
