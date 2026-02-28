@@ -268,13 +268,8 @@ def test_fetch_stock_data():
 
     assert "history" in data
     assert "financials" in data
-    assert "recommendations" in data
-    assert "recommendations_summary" in data
     assert not data["history"].empty
     assert not data["financials"].empty
-    # Recommendations are empty (not available from Massive.com)
-    assert data["recommendations"].empty
-    assert data["recommendations_summary"].empty
 
 
 def test_limit_tickers():
@@ -323,25 +318,20 @@ def _base_config(api_key: str | None) -> dict:
             "weights_fallback_message": "Weights invalid ({total}) using equal weights.",
             "history_empty_message": "History empty",
             "financials_empty_message": "Financials empty",
-            "recommendations_empty_message": "Recommendations empty",
             "portfolio_empty_message": "Portfolio empty",
             "post_analysis_nudge": "Check other tabs",
             "suggested_label": "Suggested",
             "ticker_header_template": "Data for {ticker}",
             "section_history": "History",
             "section_financials": "Financials",
-            "section_recommendations": "Recommendations",
             "download_prompt": "Download",
             "download_history_label": "History CSV",
             "download_financials_label": "Financials CSV",
-            "download_recommendations_label": "Recommendations CSV",
             "missing_api_key": "Missing",
             "max_tickers_warning": "Limiting to {max_tickers}",
             "history_ticker_label": "History tickers",
-            "recommendations_missing": "Missing recs for {ticker}",
             "history_tab_label": "History",
             "financials_tab_label": "Financials",
-            "recommendations_tab_label": "Recommendations",
             "portfolio_tab_label": "Portfolio",
             "portfolio_output_label": "Recommended Portfolio",
             "portfolio_stats_label": "Portfolio Stats",
@@ -391,7 +381,6 @@ def _base_config(api_key: str | None) -> dict:
             "max_tickers": 5,
             "financials_metrics": ["Total Revenue"],
         },
-        "recommendations": {"current_period": "0m", "previous_period": "1m"},
         "massive": {"api": {"api_key": "test-massive-key", "key_env_var": "MASSIVE_API_KEY"}},
     }
 
@@ -442,25 +431,22 @@ def test_run_dashboard_prompt_flow(monkeypatch):
     )
     monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
     monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
-    monkeypatch.setattr("src.dashboard.plot_recommendations", lambda *_args, **_kwargs: "recommendations")
     monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
     monkeypatch.setattr(
         "src.dashboard.fetch_stock_data",
         lambda *_args, **_kwargs: {
             "history": pd.DataFrame({"price": [1]}),
             "financials": pd.DataFrame({"metric": ["rev"]}),
-            "recommendations": pd.DataFrame({"grade": ["buy"]}),
-            "recommendations_summary": pd.DataFrame({"buy": [1]}, index=["0m"]),
         },
     )
 
     run_dashboard(_base_config(api_key="key"))
 
     assert sidebar.write_args == ("Suggested", ["AAPL", "MSFT"])
-    assert len(st.tabs_created) == 5
+    assert len(st.tabs_created) == 4
     assert len(st.dataframes) == 0
-    assert len(st.download_buttons) == 6
-    assert len(st.plots) == 6
+    assert len(st.download_buttons) == 4
+    assert len(st.plots) == 4
     assert "Suggested tickers: AAPL, MSFT" in st.markdowns
     assert "analysis" in st.markdowns
     assert "Check other tabs" in st.markdowns
@@ -503,15 +489,12 @@ def test_run_dashboard_invalid_weights_fallback(monkeypatch):
     )
     monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
     monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
-    monkeypatch.setattr("src.dashboard.plot_recommendations", lambda *_args, **_kwargs: "recommendations")
     monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
     monkeypatch.setattr(
         "src.dashboard.fetch_stock_data",
         lambda *_args, **_kwargs: {
             "history": pd.DataFrame({"price": [1]}),
             "financials": pd.DataFrame({"metric": ["rev"]}),
-            "recommendations": pd.DataFrame({"grade": ["buy"]}),
-            "recommendations_summary": pd.DataFrame({"buy": [1]}, index=["0m"]),
         },
     )
 
@@ -529,5 +512,4 @@ def test_run_dashboard_tabs_show_empty_states_without_tickers(monkeypatch):
 
     assert "History empty" in st.infos
     assert "Financials empty" in st.infos
-    assert "Recommendations empty" in st.infos
     assert "Portfolio empty" in st.infos

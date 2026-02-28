@@ -7,7 +7,6 @@ from typing import Dict, Iterable
 
 import pandas as pd
 
-from src.recommendations import summarize_recommendations_counts as _summarize_counts
 from src.portfolio import normalize_weights
 
 
@@ -59,20 +58,10 @@ def summarize_financials_latest(
     return summary
 
 
-def summarize_recommendations_counts(
-    summary_df: pd.DataFrame,
-    current_period: str,
-    previous_period: str,
-):
-    return _summarize_counts(summary_df, current_period, previous_period)
-
-
 def build_ticker_summary(
     ticker: str,
     data: Dict[str, pd.DataFrame],
     financial_metrics: Iterable[str],
-    current_period: str,
-    previous_period: str,
 ) -> str:
     payload: Dict[str, object] = {"t": ticker}
 
@@ -92,16 +81,6 @@ def build_ticker_summary(
     if financials_summary:
         payload["f"] = {key: _compact_number(value) for key, value in financials_summary.items()}
 
-    current, delta = summarize_recommendations_counts(
-        data.get("recommendations_summary", pd.DataFrame()),
-        current_period=current_period,
-        previous_period=previous_period,
-    )
-    if current:
-        payload["r"] = {key: int(value) for key, value in current.items()}
-    if delta:
-        payload["d"] = {key: int(value) for key, value in delta.items()}
-
     return json.dumps(payload, separators=(",", ":"))
 
 
@@ -109,8 +88,6 @@ def build_portfolio_summary(
     tickers: Iterable[str],
     data_by_ticker: Dict[str, Dict[str, pd.DataFrame]],
     financial_metrics: Iterable[str],
-    current_period: str,
-    previous_period: str,
 ) -> str:
     summaries = []
     for ticker in tickers:
@@ -120,8 +97,6 @@ def build_portfolio_summary(
                 ticker=ticker,
                 data=data,
                 financial_metrics=financial_metrics,
-                current_period=current_period,
-                previous_period=previous_period,
             )
         )
     return "\n".join(summaries)

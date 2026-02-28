@@ -16,6 +16,7 @@ def load_config(base_path: Path | None = None) -> Dict[str, Any]:
     dotenv_path = root / ".env"
     load_dotenv(dotenv_path)
     config_path = root / "config.yml"
+    print(f"Loading configuration from {config_path}")
     config = OmegaConf.load(config_path)
 
     key_env_var = "OPENROUTER_API_KEY"

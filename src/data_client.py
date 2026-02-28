@@ -1,9 +1,7 @@
 """Data client for fetching stock data from Massive.com (formerly Polygon.io).
 
 This module wraps the Massive.com REST API to provide OHLCV price history
-and financial statement data.  Analyst recommendation data is NOT available
-from Massive.com — the relevant functions return empty DataFrames so that
-downstream code (plots, summaries, CSV downloads) degrades gracefully.
+and financial statement data.
 """
 
 from __future__ import annotations
@@ -189,28 +187,6 @@ def fetch_financials(
 
 
 # ---------------------------------------------------------------------------
-# Recommendations (NOT available from Massive.com)
-# ---------------------------------------------------------------------------
-
-def fetch_recommendations(
-    client: RESTClient,  # noqa: ARG001 — kept for interface consistency
-    ticker: str,         # noqa: ARG001
-) -> pd.DataFrame:
-    """Return an empty DataFrame — Massive.com does not provide analyst
-    recommendation data.  Callers should degrade gracefully."""
-    return pd.DataFrame()
-
-
-def fetch_recommendations_summary(
-    client: RESTClient,  # noqa: ARG001
-    ticker: str,         # noqa: ARG001
-) -> pd.DataFrame:
-    """Return an empty DataFrame — Massive.com does not provide analyst
-    recommendation summary data."""
-    return pd.DataFrame()
-
-
-# ---------------------------------------------------------------------------
 # High-level convenience wrapper (replaces the old ``fetch_stock_data``)
 # ---------------------------------------------------------------------------
 
@@ -220,21 +196,14 @@ def fetch_stock_data(
     history_period: str = "1y",
     financials_period: str = "annual",
 ) -> Dict[str, Any]:
-    """Fetch all stock data for a single ticker, returning the same dict
-    shape that the legacy yfinance-based ``fetch_stock_data`` returned:
+    """Fetch all stock data for a single ticker.
 
-    .. code-block:: python
-
-        {
-            "history":                  pd.DataFrame,  # OHLCV
-            "financials":               pd.DataFrame,  # income statement
-            "recommendations":          pd.DataFrame,  # always empty
-            "recommendations_summary":  pd.DataFrame,  # always empty
-        }
+    Returns
+    -------
+    dict
+        ``{"history": pd.DataFrame, "financials": pd.DataFrame}``
     """
     return {
         "history": fetch_price_history(client, ticker, period=history_period),
         "financials": fetch_financials(client, ticker, period=financials_period),
-        "recommendations": fetch_recommendations(client, ticker),
-        "recommendations_summary": fetch_recommendations_summary(client, ticker),
     }

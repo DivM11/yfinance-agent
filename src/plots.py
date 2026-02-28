@@ -7,9 +7,6 @@ from typing import Dict, Iterable, List, Optional, Tuple
 import pandas as pd
 import plotly.graph_objects as go
 from plotly.graph_objects import Figure
-from plotly.subplots import make_subplots
-
-from src.recommendations import CATEGORIES, summarize_recommendations_counts
 
 
 def _apply_gridlines(fig: Figure) -> None:
@@ -97,47 +94,6 @@ def plot_financials(
         yaxis_title="Value",
         legend_title="Metric",
     )
-    _apply_gridlines(fig)
-    return fig
-
-
-def plot_recommendations(
-    summary: pd.DataFrame,
-    current_period: str,
-    previous_period: str,
-    title: str,
-) -> Optional[Figure]:
-    """Plot current recommendation counts and delta vs previous period."""
-    if summary is None or summary.empty:
-        return None
-
-    current_vals, delta_vals = summarize_recommendations_counts(
-        summary,
-        current_period=current_period,
-        previous_period=previous_period,
-    )
-    if not current_vals:
-        return None
-
-    rows = 2 if delta_vals is not None else 1
-    fig = make_subplots(rows=rows, cols=1, shared_xaxes=False)
-
-    fig.add_trace(
-        go.Bar(x=CATEGORIES, y=list(current_vals.values()), name="Current"),
-        row=1,
-        col=1,
-    )
-    fig.update_yaxes(title_text="Analyst recommendations", row=1, col=1)
-
-    if delta_vals is not None:
-        fig.add_trace(
-            go.Bar(x=CATEGORIES, y=list(delta_vals.values()), name="Delta"),
-            row=2,
-            col=1,
-        )
-        fig.update_yaxes(title_text="Change in past month", row=2, col=1)
-
-    fig.update_layout(title=title)
     _apply_gridlines(fig)
     return fig
 

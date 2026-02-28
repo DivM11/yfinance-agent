@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from src.plots import plot_financials, plot_history, plot_recommendations
+from src.plots import plot_financials, plot_history
 
 
 def _history_df() -> pd.DataFrame:
@@ -33,47 +33,3 @@ def test_plot_financials_metrics():
 
     assert fig is not None
     assert len(fig.data) == 2
-
-
-def test_plot_recommendations_current_and_delta():
-    summary = pd.DataFrame(
-        {
-            "StrongBuy": [1, 2],
-            "Buy": [3, 4],
-            "Hold": [5, 6],
-            "Sell": [1, 1],
-            "StrongSell": [0, 1],
-        },
-        index=["0m", "1m"],
-    )
-
-    fig = plot_recommendations(summary, current_period="0m", previous_period="1m", title="Rec")
-
-    assert fig is not None
-    assert len(fig.data) == 2
-
-
-def test_plot_recommendations_period_column_and_negative_periods():
-    summary = pd.DataFrame(
-        {
-            "period": ["0m", "-1m"],
-            "strongBuy": [2, 1],
-            "buy": [4, 3],
-            "hold": [6, 5],
-            "sell": [1, 1],
-            "strongSell": [0, 1],
-        }
-    )
-
-    fig = plot_recommendations(summary, current_period="0m", previous_period="1m", title="Rec")
-
-    assert fig is not None
-    assert len(fig.data) == 2
-
-
-def test_plot_recommendations_missing_current():
-    summary = pd.DataFrame({"Buy": [1]}, index=["1m"])
-
-    fig = plot_recommendations(summary, current_period="0m", previous_period="1m", title="Rec")
-
-    assert fig is None

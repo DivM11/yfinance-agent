@@ -1,8 +1,7 @@
 """Dashboard module for the YFinance Agent application.
 
 Data is fetched from Massive.com (formerly Polygon.io) via the ``massive``
-Python SDK.  Analyst recommendation data is NOT available from Massive.com;
-the Recommendations tab will show an informational message instead.
+Python SDK.
 """
 
 from __future__ import annotations
@@ -26,7 +25,7 @@ from src.llm_validation import (
     parse_weights_payload,
     validate_weight_sum,
 )
-from src.plots import plot_financials, plot_history, plot_portfolio_returns, plot_recommendations
+from src.plots import plot_financials, plot_history, plot_portfolio_returns
 from src.portfolio import allocate_portfolio_by_weights, format_portfolio_allocation, normalize_weights
 from src.summaries import (
     build_portfolio_returns_series,
@@ -231,7 +230,6 @@ def run_dashboard(config: Dict[str, Any]) -> None:
     dashboard = config["dashboard"]
     openrouter_cfg = config["openrouter"]
     stocks_cfg = config["stocks"]
-    recommendations_cfg = config["recommendations"]
 
     _init_state(
         dashboard["default_user_input"],
@@ -263,11 +261,10 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             ui["chat_tab_label"],
             ui["history_tab_label"],
             ui["financials_tab_label"],
-            ui["recommendations_tab_label"],
             ui["portfolio_tab_label"],
         ]
     )
-    chat_tab, history_tab, financials_tab, recommendations_tab, portfolio_tab = tabs
+    chat_tab, history_tab, financials_tab, portfolio_tab = tabs
 
     with chat_tab:
         for message in st.session_state["messages"]:
@@ -342,8 +339,6 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             tickers=tickers,
             data_by_ticker=data_by_ticker,
             financial_metrics=stocks_cfg["financials_metrics"],
-            current_period=recommendations_cfg["current_period"],
-            previous_period=recommendations_cfg["previous_period"],
         )
 
         weights_prompt = prompts_cfg["weights_template"].format(
@@ -483,33 +478,6 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                     label=f"{ui['download_financials_label']} ({ticker})",
                     data=_df_to_csv_bytes(financials),
                     file_name=f"{ticker}_financials.csv",
-                    mime="text/csv",
-                )
-
-    with recommendations_tab:
-        if not tickers:
-            st.info(ui["recommendations_empty_message"])
-        else:
-            for ticker in tickers:
-                st.subheader(ui["ticker_header_template"].format(ticker=ticker))
-                data = data_by_ticker.get(ticker, {})
-                recommendations_fig = plot_recommendations(
-                    data.get("recommendations_summary", pd.DataFrame()),
-                    current_period=recommendations_cfg["current_period"],
-                    previous_period=recommendations_cfg["previous_period"],
-                    title=f"{ticker} Recommendations",
-                )
-                if recommendations_fig is not None:
-                    st.plotly_chart(recommendations_fig, use_container_width=True)
-                else:
-                    st.info(ui["recommendations_missing"].format(ticker=ticker))
-
-                st.caption(ui["download_prompt"])
-                recommendations = data.get("recommendations", pd.DataFrame())
-                st.download_button(
-                    label=f"{ui['download_recommendations_label']} ({ticker})",
-                    data=_df_to_csv_bytes(recommendations),
-                    file_name=f"{ticker}_recommendations.csv",
                     mime="text/csv",
                 )
 

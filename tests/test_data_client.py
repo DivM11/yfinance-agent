@@ -6,8 +6,6 @@ from src.data_client import (
     create_massive_client,
     fetch_financials,
     fetch_price_history,
-    fetch_recommendations,
-    fetch_recommendations_summary,
     fetch_stock_data,
 )
 
@@ -156,22 +154,6 @@ def test_fetch_financials_empty():
 
 
 # ---------------------------------------------------------------------------
-# Tests — recommendations (always empty)
-# ---------------------------------------------------------------------------
-
-def test_fetch_recommendations_returns_empty():
-    client = DummyMassiveClient()
-    df = fetch_recommendations(client, "AAPL")
-    assert df.empty
-
-
-def test_fetch_recommendations_summary_returns_empty():
-    client = DummyMassiveClient()
-    df = fetch_recommendations_summary(client, "AAPL")
-    assert df.empty
-
-
-# ---------------------------------------------------------------------------
 # Tests — high-level fetch_stock_data
 # ---------------------------------------------------------------------------
 
@@ -179,11 +161,9 @@ def test_fetch_stock_data_returns_all_keys():
     client = DummyMassiveClient()
     data = fetch_stock_data(client, "AAPL", history_period="1y", financials_period="quarterly")
 
-    assert set(data.keys()) == {"history", "financials", "recommendations", "recommendations_summary"}
+    assert set(data.keys()) == {"history", "financials"}
     assert not data["history"].empty
     assert not data["financials"].empty
-    assert data["recommendations"].empty
-    assert data["recommendations_summary"].empty
 
 
 def test_create_massive_client_calls_rest_client(monkeypatch):

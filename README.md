@@ -5,10 +5,8 @@ The YFinance Agent is a Python-based application designed to help users build pe
 
 - **Streamlit**: For building an interactive and user-friendly dashboard.
 - **Massive.com (formerly Polygon.io)**: For retrieving stock market data (OHLCV prices, SEC-sourced financial statements).
-- **OpenRouter**: For semantic matching and LLM inference to understand user input and provide intelligent recommendations.
+- **OpenRouter**: For semantic matching and LLM inference to understand user input and provide intelligent analysis.
 - **Custom Model Support**: Allows integration of custom models for advanced analysis.
-
-> **Note:** Analyst recommendation data (buy/hold/sell summaries) is not available from Massive.com. The Recommendations tab will show an informational message. To restore this feature, integrate a supplementary API such as Finnhub.
 
 ## Features
 1. **User Input Handling**: Accepts natural language input to understand user preferences for portfolio creation.
@@ -31,7 +29,6 @@ yfinance-agent/
 │   ├── llm_validation.py # LLM output validation
 │   ├── plots.py        # Plotly chart builders
 │   ├── portfolio.py    # Portfolio allocation
-│   ├── recommendations.py # Recommendation summary helpers
 │   └── summaries.py    # Data summarization
 ├── tests/              # Test suite
 └── README.md           # Project overview and instructions

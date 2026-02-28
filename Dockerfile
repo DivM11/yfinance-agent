@@ -7,13 +7,14 @@ WORKDIR /app
 # Install Poetry
 RUN pip install poetry
 
-# Copy the project files to the container
-COPY . /app
+COPY pyproject.toml poetry.lock /app/
 
 # Install dependencies using Poetry
 # Using --no-root to avoid installing the project itself, as we are using Poetry only for dependency management
 RUN poetry config virtualenvs.create false \
     && poetry install --no-root
+
+COPY . /app
 
 # Expose the port Streamlit will run on
 EXPOSE 8501
