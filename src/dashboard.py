@@ -23,7 +23,6 @@ from src.llm_validation import (
     extract_valid_tickers,
     has_valid_tickers,
     parse_weights_payload,
-    validate_weight_sum,
 )
 from src.plots import (
     plot_financials,
@@ -210,7 +209,6 @@ def _init_state(default_user_input: str, default_portfolio_size: float, chat_int
     state.setdefault("user_input", default_user_input)
     state.setdefault("tickers", [])
     state.setdefault("data_by_ticker", {})
-    state.setdefault("selected_history_tickers", [])
     state.setdefault("portfolio_size", default_portfolio_size)
     state.setdefault("weights", {})
     state.setdefault("portfolio_allocation", {})
@@ -371,16 +369,24 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         )
         weights_text = _extract_message_text(weights_response)
         parsed_weights = parse_weights_payload(weights_text)
-        is_valid_weight_sum, raw_weight_sum = validate_weight_sum(parsed_weights)
-        if not parsed_weights or not is_valid_weight_sum:
-            st.sidebar.warning(ui["weights_validation_warning"].format(total=raw_weight_sum))
+        if not parsed_weights:
+            _log_backend("Weight parsing failed. Raw output: %s", weights_text)
             _push_chat_message(
                 "assistant",
-                ui["weights_fallback_message"].format(total=raw_weight_sum),
+                ui["weights_fallback_message"],
                 chat_tab,
             )
             weights = normalize_weights({}, tickers)
         else:
+            dropped = sorted(set(tickers) - set(parsed_weights.keys()))
+            if dropped:
+                _push_chat_message(
+                    "assistant",
+                    ui["weights_tickers_dropped"].format(
+                        dropped=", ".join(dropped),
+                    ),
+                    chat_tab,
+                )
             weights = normalize_weights(parsed_weights, tickers)
 
         allocation = allocate_portfolio_by_weights(
@@ -437,10 +443,12 @@ def run_dashboard(config: Dict[str, Any]) -> None:
     tickers = st.session_state.get("tickers", [])
     st.sidebar.write(ui["suggested_label"], tickers)
     if tickers:
+        stored = st.session_state.get("selected_history_tickers")
+        if stored is None or not set(stored).issubset(set(tickers)):
+            st.session_state["selected_history_tickers"] = list(tickers)
         selected_history_tickers = st.sidebar.multiselect(
             ui["history_ticker_label"],
             options=tickers,
-            default=st.session_state.get("selected_history_tickers", tickers),
             key="selected_history_tickers",
         )
     else:

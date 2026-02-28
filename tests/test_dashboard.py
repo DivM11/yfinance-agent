@@ -319,8 +319,8 @@ def _base_config(api_key: str | None) -> dict:
             "chat_tab_label": "Chat",
             "ticker_reply_template": "Suggested tickers: {tickers}",
             "ticker_validation_error": "No valid tickers found.",
-            "weights_validation_warning": "Bad weights total: {total}",
-            "weights_fallback_message": "Weights invalid ({total}) using equal weights.",
+            "weights_fallback_message": "Could not parse weights. Using equal weights.",
+            "weights_tickers_dropped": "Note: {dropped} received zero weight.",
             "history_empty_message": "History empty",
             "financials_empty_message": "Financials empty",
             "portfolio_empty_message": "Portfolio empty",
@@ -474,7 +474,8 @@ def test_run_dashboard_invalid_ticker_output(monkeypatch, caplog):
     assert "Raw model output from OpenRouter: ??? , ###" in caplog.text
 
 
-def test_run_dashboard_invalid_weights_fallback(monkeypatch):
+def test_run_dashboard_weights_normalized(monkeypatch):
+    """Weights that don't sum to 1.0 are normalized, not rejected."""
     sidebar = DummySidebar()
     st = DummyStreamlit(sidebar, chat_input_value="prompt")
     monkeypatch.setattr("src.dashboard.st", st)
@@ -507,7 +508,86 @@ def test_run_dashboard_invalid_weights_fallback(monkeypatch):
 
     run_dashboard(_base_config(api_key="key"))
 
-    assert sidebar.warning_msg == "Bad weights total: 1.4"
+    # Weights are normalized, not rejected — no sidebar warning
+    assert sidebar.warning_msg is None
+    # Analysis should still complete
+    assert "analysis" in st.markdowns
+
+
+def test_run_dashboard_weights_dropped_tickers(monkeypatch):
+    """When LLM omits tickers from weights, user is informed."""
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value="prompt")
+    monkeypatch.setattr("src.dashboard.st", st)
+
+    monkeypatch.setattr(
+        "src.dashboard.create_openrouter_client",
+        lambda **_kwargs: DummyClient(
+            [
+                "AAPL, MSFT",
+                '{"weights": {"AAPL": 1.0}}',
+                "analysis",
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "src.dashboard.create_massive_client",
+        lambda **_kwargs: DummyMassiveClient(),
+    )
+    monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
+    monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_allocation", lambda *_args, **_kwargs: "allocation")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
+    monkeypatch.setattr(
+        "src.dashboard.fetch_stock_data",
+        lambda *_args, **_kwargs: {
+            "history": pd.DataFrame({"price": [1]}),
+            "financials": pd.DataFrame({"metric": ["rev"]}),
+        },
+    )
+
+    run_dashboard(_base_config(api_key="key"))
+
+    assert any("MSFT" in msg and "zero weight" in msg for msg in st.markdowns)
+    assert "analysis" in st.markdowns
+
+
+def test_run_dashboard_unparseable_weights_fallback(monkeypatch):
+    """When weight parsing fails completely, equal weights are used."""
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value="prompt")
+    monkeypatch.setattr("src.dashboard.st", st)
+
+    monkeypatch.setattr(
+        "src.dashboard.create_openrouter_client",
+        lambda **_kwargs: DummyClient(
+            [
+                "AAPL, MSFT",
+                "not valid json at all",
+                "analysis",
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "src.dashboard.create_massive_client",
+        lambda **_kwargs: DummyMassiveClient(),
+    )
+    monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
+    monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_allocation", lambda *_args, **_kwargs: "allocation")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
+    monkeypatch.setattr(
+        "src.dashboard.fetch_stock_data",
+        lambda *_args, **_kwargs: {
+            "history": pd.DataFrame({"price": [1]}),
+            "financials": pd.DataFrame({"metric": ["rev"]}),
+        },
+    )
+
+    run_dashboard(_base_config(api_key="key"))
+
+    assert "Could not parse weights. Using equal weights." in st.markdowns
+    assert "analysis" in st.markdowns
 
 
 def test_run_dashboard_tabs_show_empty_states_without_tickers(monkeypatch):
