@@ -23,6 +23,7 @@ def _write_config(root: Path) -> None:
 def test_load_config_without_secrets(monkeypatch, tmp_path: Path) -> None:
     _write_config(tmp_path)
     monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
 
     config = load_config(base_path=tmp_path)
 
@@ -30,14 +31,11 @@ def test_load_config_without_secrets(monkeypatch, tmp_path: Path) -> None:
     assert "api_key" not in config.get("openrouter", {}).get("api", {})
 
 
-def test_load_config_with_dotenv(monkeypatch, tmp_path: Path) -> None:
+def test_load_config_with_env_vars(monkeypatch, tmp_path: Path) -> None:
+    """API keys injected via environment variables are picked up."""
     _write_config(tmp_path)
-    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
-    monkeypatch.delenv("MASSIVE_API_KEY", raising=False)
-    (tmp_path / ".env").write_text(
-        "OPENROUTER_API_KEY=\"test-key\"\nMASSIVE_API_KEY=\"test-massive-key\"\n",
-        encoding="utf-8",
-    )
+    monkeypatch.setenv("OPENROUTER_API_KEY", "test-key")
+    monkeypatch.setenv("MASSIVE_API_KEY", "test-massive-key")
 
     config = load_config(base_path=tmp_path)
 

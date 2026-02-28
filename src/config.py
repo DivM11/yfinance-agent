@@ -6,19 +6,22 @@ import os
 from pathlib import Path
 from typing import Any, Dict
 
-from dotenv import load_dotenv
 from omegaconf import OmegaConf
 
 
 def load_config(base_path: Path | None = None) -> Dict[str, Any]:
-    """Load config.yml and merge in environment-based secrets if present."""
+    """Load config.yml and merge in environment-variable secrets.
+
+    API keys are read from environment variables (e.g. ``OPENROUTER_API_KEY``,
+    ``MASSIVE_API_KEY``).  Pass them via ``docker run -e`` or export them in
+    your shell — no ``.env`` file is required.
+    """
     root = base_path or Path(__file__).resolve().parents[1]
-    dotenv_path = root / ".env"
-    load_dotenv(dotenv_path)
     config_path = root / "config.yml"
     print(f"Loading configuration from {config_path}")
     config = OmegaConf.load(config_path)
 
+    # --- OpenRouter API key ---
     key_env_var = "OPENROUTER_API_KEY"
     try:
         key_env_var = config.openrouter.api.key_env_var
@@ -29,7 +32,7 @@ def load_config(base_path: Path | None = None) -> Dict[str, Any]:
     if api_key:
         config.openrouter.api.api_key = api_key
 
-    # Massive.com (formerly Polygon.io) API key
+    # --- Massive.com (formerly Polygon.io) API key ---
     massive_key_env_var = "MASSIVE_API_KEY"
     try:
         massive_key_env_var = config.massive.api.key_env_var

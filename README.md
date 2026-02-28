@@ -20,6 +20,8 @@ yfinance-agent/
 │
 ├── docs/               # Documentation files
 ├── config.yml          # Application configuration
+├── docker-compose.yml  # Docker Compose services
+├── .secrets.example    # Template for .secrets (gitignored)
 ├── main.py             # Entry point for the application
 ├── pyproject.toml      # Poetry configuration file
 ├── src/
@@ -59,17 +61,35 @@ poetry run streamlit run main.py
 
 ## Configuration and Secrets
 - Update [config.yml](config.yml) for model, prompts, and UI text.
-- Create a local `.env` file (gitignored) to store API keys.
+- API keys are supplied as **environment variables** at runtime.
 
-Example `.env`:
+### Setting up secrets
+Copy the example file and fill in your keys:
 ```bash
-OPENROUTER_API_KEY="your_openrouter_key_here"
-MASSIVE_API_KEY="your_massive_com_key_here"
+cp .secrets.example .secrets
+```
+Edit `.secrets`:
+```
+OPENROUTER_API_KEY=your_openrouter_key_here
+MASSIVE_API_KEY=your_massive_com_key_here
+```
+> `.secrets` is git-ignored.
+
+**Locally (shell):**
+```bash
+export OPENROUTER_API_KEY="your_openrouter_key_here"
+export MASSIVE_API_KEY="your_massive_com_key_here"
+poetry run streamlit run main.py
 ```
 
-You can copy `.env.example` to get started:
+**Docker Compose (recommended):**
 ```bash
-cp .env.example .env
+docker compose up # reads .secrets automatically
+```
+
+**Docker CLI (env-file):**
+```bash
+docker run -p 8501:8501 --env-file .secrets yfinance-agent
 ```
 
 ### Massive.com (Polygon.io) Setup
@@ -86,29 +106,30 @@ cp .env.example .env
 ## Using Docker
 
 ### Build the Docker Image
-To build the Docker image for the YFinance Agent, run the following command:
 ```bash
 docker build -t yfinance-agent .
 ```
 
-### Run the Application in App Mode
-To run the application in "app mode" (default), use the following command:
+### Run with Docker Compose (recommended)
 ```bash
-docker run -p 8501:8501 yfinance-agent
+docker compose up                           # app on :8501
+docker compose --profile test up            # run tests
 ```
 
-### Run the Application in Test Mode
-To run the application in "test mode" (to execute the test suite), use the following command:
+### Run with Docker CLI
 ```bash
-docker run --rm yfinance-agent pytest
+# App mode
+docker run -p 8501:8501 --env-file .secrets yfinance-agent
+
+# Test mode
+docker run --rm --env-file .secrets yfinance-agent pytest
 ```
 
-### Docker Rebuild And Test Run
-
+### Full rebuild cycle
 ```bash
-docker build -t yfinance-agent .
-docker run --rm --name yfinance-agent-test yfinance-agent pytest
-docker run --rm --name yfinance-agent-app -p 8501:8501 yfinance-agent
+docker compose build
+docker compose --profile test run --rm test
+docker compose up
 ```
 
 ## Code Standards

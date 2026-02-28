@@ -5,3 +5,4 @@ __pycache__/
 .github/
 todo.md
 deployment/
+.secrets

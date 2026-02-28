@@ -17,7 +17,6 @@ numpy = "*"
 matplotlib = "*"
 omegaconf = "*"
 plotly = "*"
-python-dotenv = "*"
 
 [tool.poetry.group.dev.dependencies]
 black = "*"
