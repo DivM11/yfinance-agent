@@ -29,9 +29,32 @@ def has_valid_tickers(tickers: Iterable[str]) -> bool:
     return False
 
 
+_THINK_TAG_RE = re.compile(r"<think>.*?</think>", re.DOTALL)
+_CODE_FENCE_RE = re.compile(r"```(?:json)?\s*\n?(.*?)\n?\s*```", re.DOTALL)
+
+
+def _extract_json_string(text: str) -> str:
+    """Extract a JSON object from LLM output that may contain markdown
+    code fences, ``<think>`` blocks, or surrounding prose."""
+    cleaned = _THINK_TAG_RE.sub("", text).strip()
+
+    fence = _CODE_FENCE_RE.search(cleaned)
+    if fence:
+        return fence.group(1).strip()
+
+    for open_ch, close_ch in ["{", "}"], ["[", "]"]:
+        start = cleaned.find(open_ch)
+        end = cleaned.rfind(close_ch)
+        if start != -1 and end > start:
+            return cleaned[start:end + 1]
+
+    return cleaned
+
+
 def parse_weights_payload(text: str) -> Dict[str, float]:
+    cleaned = _extract_json_string(text)
     try:
-        payload = json.loads(text)
+        payload = json.loads(cleaned)
     except json.JSONDecodeError:
         return {}
 

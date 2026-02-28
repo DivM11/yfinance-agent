@@ -201,7 +201,7 @@ class DummyStreamlit:
     def write(self, text: str) -> None:
         self.writes.append(text)
 
-    def dataframe(self, df: pd.DataFrame) -> None:
+    def dataframe(self, df: pd.DataFrame, **kwargs) -> None:
         self.dataframes.append(df)
 
     def pyplot(self, fig) -> None:
@@ -240,6 +240,11 @@ class DummyStreamlit:
 def test_build_prompt():
     prompt = build_prompt("Hello {user_input}", "world")
     assert prompt == "Hello world"
+
+
+def test_build_prompt_with_extra_kwargs():
+    prompt = build_prompt("Pick {num_tickers} for {user_input}", "tech", num_tickers=10)
+    assert prompt == "Pick 10 for tech"
 
 
 def test_parse_tickers():
@@ -431,6 +436,7 @@ def test_run_dashboard_prompt_flow(monkeypatch):
     )
     monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
     monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_allocation", lambda *_args, **_kwargs: "allocation")
     monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
     monkeypatch.setattr(
         "src.dashboard.fetch_stock_data",
@@ -446,7 +452,7 @@ def test_run_dashboard_prompt_flow(monkeypatch):
     assert len(st.tabs_created) == 4
     assert len(st.dataframes) == 0
     assert len(st.download_buttons) == 4
-    assert len(st.plots) == 4
+    assert len(st.plots) == 5
     assert "Suggested tickers: AAPL, MSFT" in st.markdowns
     assert "analysis" in st.markdowns
     assert "Check other tabs" in st.markdowns
@@ -489,6 +495,7 @@ def test_run_dashboard_invalid_weights_fallback(monkeypatch):
     )
     monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
     monkeypatch.setattr("src.dashboard.plot_financials", lambda *_args, **_kwargs: "financials")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_allocation", lambda *_args, **_kwargs: "allocation")
     monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
     monkeypatch.setattr(
         "src.dashboard.fetch_stock_data",

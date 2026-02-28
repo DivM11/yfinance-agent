@@ -2,7 +2,7 @@
 
 import pandas as pd
 
-from src.plots import plot_financials, plot_history
+from src.plots import plot_financials, plot_history, plot_portfolio_allocation
 
 
 def _history_df() -> pd.DataFrame:
@@ -33,3 +33,18 @@ def test_plot_financials_metrics():
 
     assert fig is not None
     assert len(fig.data) == 2
+
+
+def test_plot_portfolio_allocation():
+    allocation = {"AAPL": 600.0, "MSFT": 400.0}
+    fig = plot_portfolio_allocation(allocation, title="Test Allocation")
+
+    assert fig is not None
+    assert len(fig.data) == 1
+    assert fig.data[0].orientation == "h"
+
+
+def test_plot_portfolio_allocation_empty():
+    fig = plot_portfolio_allocation({})
+
+    assert fig is None

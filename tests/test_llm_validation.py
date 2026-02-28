@@ -41,3 +41,24 @@ def test_validate_weight_sum():
     assert round(total_ok, 2) == 1.0
     assert bad is False
     assert round(total_bad, 2) == 0.8
+
+
+def test_parse_weights_payload_markdown_fenced():
+    text = '```json\n{"weights": {"AAPL": 0.6, "MSFT": 0.4}}\n```'
+    result = parse_weights_payload(text)
+
+    assert result == {"AAPL": 0.6, "MSFT": 0.4}
+
+
+def test_parse_weights_payload_with_think_tags():
+    text = '<think>\nLet me analyze...\n</think>\n{"weights": {"NVDA": 0.5, "AMD": 0.5}}'
+    result = parse_weights_payload(text)
+
+    assert result == {"NVDA": 0.5, "AMD": 0.5}
+
+
+def test_parse_weights_payload_with_surrounding_text():
+    text = 'Here are the weights:\n{"weights": {"GOOG": 0.7, "META": 0.3}}\nDone.'
+    result = parse_weights_payload(text)
+
+    assert result == {"GOOG": 0.7, "META": 0.3}

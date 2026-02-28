@@ -13,9 +13,6 @@ services:
 
   test:
     build: .
-    env_file:
-      - .secrets
-    command: ["pytest", "-v"]
+    command: ["pytest", "-v", "--tb=short"]
     profiles:
       - test
-      # only runs with: docker compose --profile test up

@@ -112,8 +112,8 @@ docker build -t yfinance-agent .
 
 ### Run with Docker Compose (recommended)
 ```bash
-docker compose up                           # app on :8501
-docker compose --profile test up            # run tests
+docker compose up                                        # app on :8501
+docker compose run --rm test                             # run tests (streams output)
 ```
 
 ### Run with Docker CLI
@@ -122,13 +122,13 @@ docker compose --profile test up            # run tests
 docker run -p 8501:8501 --env-file .secrets yfinance-agent
 
 # Test mode
-docker run --rm --env-file .secrets yfinance-agent pytest
+docker run --rm yfinance-agent pytest -v --tb=short
 ```
 
 ### Full rebuild cycle
 ```bash
 docker compose build
-docker compose --profile test run --rm test
+docker compose run --rm test
 docker compose up
 ```
 

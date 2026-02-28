@@ -25,7 +25,12 @@ from src.llm_validation import (
     parse_weights_payload,
     validate_weight_sum,
 )
-from src.plots import plot_financials, plot_history, plot_portfolio_returns
+from src.plots import (
+    plot_financials,
+    plot_history,
+    plot_portfolio_allocation,
+    plot_portfolio_returns,
+)
 from src.portfolio import allocate_portfolio_by_weights, format_portfolio_allocation, normalize_weights
 from src.summaries import (
     build_portfolio_returns_series,
@@ -115,9 +120,9 @@ def create_openrouter_client(
     return OpenAI(api_key=api_key, base_url=base_url, default_headers=headers or {})
 
 
-def build_prompt(template: str, user_input: str) -> str:
+def build_prompt(template: str, user_input: str, **kwargs: object) -> str:
     """Build the LLM prompt from a template."""
-    return template.format(user_input=user_input)
+    return template.format(user_input=user_input, **kwargs)
 
 
 def parse_tickers(text: str, delimiter: str) -> List[str]:
@@ -284,11 +289,18 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             },
         )
 
-        prompt = build_prompt(prompts_cfg["ticker_template"], prompt_input)
+        num_tickers = stocks_cfg["max_tickers"]
+        ticker_system = prompts_cfg["ticker_system"].format(
+            num_tickers=num_tickers,
+        )
+        prompt = build_prompt(
+            prompts_cfg["ticker_template"], prompt_input,
+            num_tickers=num_tickers,
+        )
         tickers, ticker_raw_output = generate_tickers(
             client=client,
             prompt=prompt,
-            system_prompt=prompts_cfg["ticker_system"],
+            system_prompt=ticker_system,
             model=models_cfg["ticker"],
             max_tokens=outputs_cfg["ticker_max_tokens"],
             temperature=temperatures_cfg["ticker"],
@@ -488,20 +500,25 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             allocation = st.session_state.get("portfolio_allocation", {})
             if allocation:
                 st.subheader(ui["portfolio_output_label"])
-                st.write(format_portfolio_allocation(allocation))
+                alloc_fig = plot_portfolio_allocation(
+                    allocation, title=ui["portfolio_output_label"],
+                )
+                if alloc_fig is not None:
+                    st.plotly_chart(alloc_fig, use_container_width=True)
 
             stats = st.session_state.get("portfolio_stats", {})
             if stats:
                 st.subheader(ui["portfolio_stats_label"])
-                st.write(
-                    ui["portfolio_stats_template"].format(
-                        min=stats.get("min"),
-                        max=stats.get("max"),
-                        median=stats.get("median"),
-                        current=stats.get("current"),
-                        return_1y=stats.get("return_1y"),
-                    )
+                stats_df = pd.DataFrame(
+                    [{
+                        "Min": f"{stats.get('min', 0):.2f}",
+                        "Max": f"{stats.get('max', 0):.2f}",
+                        "Median": f"{stats.get('median', 0):.2f}",
+                        "Current": f"{stats.get('current', 0):.2f}",
+                        "1Y Return": f"{stats.get('return_1y', 0):.2%}",
+                    }]
                 )
+                st.dataframe(stats_df, use_container_width=True, hide_index=True)
 
             portfolio_series = st.session_state.get("portfolio_series", pd.Series(dtype=float))
             returns_fig = plot_portfolio_returns(portfolio_series, ui["portfolio_returns_label"])
@@ -511,4 +528,8 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             portfolio_financials = st.session_state.get("portfolio_financials", {})
             if portfolio_financials:
                 st.subheader(ui["portfolio_financials_label"])
-                st.dataframe(pd.DataFrame([portfolio_financials]))
+                st.dataframe(
+                    pd.DataFrame([portfolio_financials]),
+                    use_container_width=True,
+                    hide_index=True,
+                )

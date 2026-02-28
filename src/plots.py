@@ -118,3 +118,35 @@ def plot_portfolio_returns(portfolio_series: pd.Series, title: str) -> Optional[
     )
     _apply_gridlines(fig)
     return fig
+
+
+def plot_portfolio_allocation(
+    allocation: Dict[str, float],
+    title: str = "Recommended Portfolio",
+) -> Optional[Figure]:
+    """Horizontal bar chart showing dollar allocation per ticker with annotations."""
+    if not allocation:
+        return None
+
+    tickers = list(allocation.keys())
+    amounts = [allocation[t] for t in tickers]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=amounts,
+            y=tickers,
+            orientation="h",
+            text=[f"${a:,.0f}" for a in amounts],
+            textposition="outside",
+            marker_color="#636EFA",
+        )
+    )
+    fig.update_layout(
+        title=title,
+        xaxis_title="Allocation ($)",
+        yaxis_title="Ticker",
+        yaxis={"categoryorder": "total ascending"},
+    )
+    _apply_gridlines(fig)
+    return fig

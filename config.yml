@@ -60,7 +60,7 @@ openrouter:
 
   outputs:
     ticker_max_tokens: 100
-    weights_max_tokens: 200
+    weights_max_tokens: 400
     analysis_max_tokens: 500
 
   temperatures:
@@ -69,17 +69,17 @@ openrouter:
     analysis: 0.2
 
   prompts:
-    ticker_system: "You are a financial assistant. Respond with a comma-separated list of US stock tickers only."
-    ticker_template: "Suggest a list of US stock tickers for the following portfolio preferences: {user_input}"
-    weights_system: "You are a portfolio allocator. Return JSON only."
-    weights_template: "Given the user preferences and ticker summary, return weights that sum to 1. Use JSON: {{\"weights\": {{\"TICKER\": 0.25}}}}.\nUser preferences: {user_input}\nTickers: {tickers}\nSummary:\n{summary}"
+    ticker_system: "You are a financial assistant. Return exactly {num_tickers} comma-separated US stock tickers. No explanations, no commentary."
+    ticker_template: "Create a portfolio with {num_tickers} US stock tickers for: {user_input}"
+    weights_system: "You are a portfolio allocator. Respond with a single JSON object only. No markdown fences, no explanation, no code blocks."
+    weights_template: "Allocate portfolio weights that sum to exactly 1.0 across these tickers.\nReturn ONLY a JSON object: {{\"weights\": {{\"TICKER\": 0.25}}}}\n\nUser preferences: {user_input}\nTickers: {tickers}\nSummary:\n{summary}"
     analysis_system: "You are a financial analyst. Provide a concise evaluation of the recommended tickers."
     analysis_template: "User preferences: {user_input}\nPortfolio size: {portfolio_size}\nTickers: {tickers}\nWeights: {weights}\nAllocation: {allocation}\nSummary:\n{summary}\nProvide a brief evaluation and any risks."
 
 stocks:
   history_period: "1y"
   financials_period: "quarterly"
-  max_tickers: 5
+  max_tickers: 10
   financials_metrics:
     - "Total Revenue"
     - "Cost Of Revenue"
