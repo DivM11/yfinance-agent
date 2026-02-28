@@ -41,7 +41,7 @@ def test_plot_portfolio_allocation():
 
     assert fig is not None
     assert len(fig.data) == 1
-    assert fig.data[0].orientation == "h"
+    assert fig.data[0].orientation is None  # vertical (default)
 
 
 def test_plot_portfolio_allocation_empty():

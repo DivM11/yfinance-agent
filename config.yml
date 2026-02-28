@@ -1,5 +1,5 @@
 app:
-  title: "YFinance Agent Dashboard"
+  title: "Equity Agent Dashboard"
   layout: "wide"
 
 massive:
@@ -8,7 +8,7 @@ massive:
     # api_key is loaded from environment at runtime
 
 dashboard:
-  default_user_input: "I want a tech-focused growth portfolio."
+  default_user_input: "I want a sustainable and growth-focused portfolio."
   default_portfolio_size: 1000.0
   ticker_delimiter: ","
 
@@ -51,12 +51,12 @@ openrouter:
     base_url: "https://openrouter.ai/api/v1"
     key_env_var: "OPENROUTER_API_KEY"
     http_referer: "http://localhost:8501"
-    app_title: "YFinance Agent"
+    app_title: "Equity Agent"
 
   models:
-    ticker: "google/gemini-2.5-flash-lite"
-    weights: "google/gemini-2.5-flash-lite"
-    analysis: "google/gemini-2.5-flash-lite"
+    ticker: "anthropic/claude-3.5-haiku"
+    weights: "anthropic/claude-3.5-haiku"
+    analysis: "anthropic/claude-3.5-haiku"
 
   outputs:
     ticker_max_tokens: 100
@@ -69,8 +69,8 @@ openrouter:
     analysis: 0.2
 
   prompts:
-    ticker_system: "You are a financial assistant. Return exactly {num_tickers} comma-separated US stock tickers. No explanations, no commentary."
-    ticker_template: "Create a portfolio with {num_tickers} US stock tickers for: {user_input}"
+    ticker_system: "You are a financial assistant. Return up to {num_tickers} comma-separated US stock tickers. No explanations, no commentary."
+    ticker_template: "Create a portfolio with up to {num_tickers} US stock tickers for: {user_input}"
     weights_system: "You are a portfolio allocator. Respond with a single JSON object only. No markdown fences, no explanation, no code blocks."
     weights_template: "Allocate portfolio weights that sum to exactly 1.0 across these tickers.\nReturn ONLY a JSON object: {{\"weights\": {{\"TICKER\": 0.25}}}}\n\nUser preferences: {user_input}\nTickers: {tickers}\nSummary:\n{summary}"
     analysis_system: "You are a financial analyst. Provide a concise evaluation of the recommended tickers."

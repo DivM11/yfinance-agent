@@ -124,7 +124,7 @@ def plot_portfolio_allocation(
     allocation: Dict[str, float],
     title: str = "Recommended Portfolio",
 ) -> Optional[Figure]:
-    """Horizontal bar chart showing dollar allocation per ticker with annotations."""
+    """Vertical bar chart showing dollar allocation per ticker with annotations."""
     if not allocation:
         return None
 
@@ -134,9 +134,8 @@ def plot_portfolio_allocation(
     fig = go.Figure()
     fig.add_trace(
         go.Bar(
-            x=amounts,
-            y=tickers,
-            orientation="h",
+            x=tickers,
+            y=amounts,
             text=[f"${a:,.0f}" for a in amounts],
             textposition="outside",
             marker_color="#636EFA",
@@ -144,9 +143,9 @@ def plot_portfolio_allocation(
     )
     fig.update_layout(
         title=title,
-        xaxis_title="Allocation ($)",
-        yaxis_title="Ticker",
-        yaxis={"categoryorder": "total ascending"},
+        xaxis_title="Ticker",
+        yaxis_title="Allocation ($)",
+        xaxis={"categoryorder": "total descending"},
     )
     _apply_gridlines(fig)
     return fig
