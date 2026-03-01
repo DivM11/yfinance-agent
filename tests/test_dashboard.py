@@ -174,6 +174,24 @@ class DummyContainer:
         return False
 
 
+class DummyPlaceholder:
+    def __init__(self, markdowns=None, progress_updates=None):
+        self._markdowns = markdowns
+        self._progress_updates = progress_updates
+
+    def markdown(self, text: str) -> None:
+        if self._markdowns is not None:
+            self._markdowns.append(text)
+
+    def progress(self, value: float, text: str | None = None):
+        if self._progress_updates is not None:
+            self._progress_updates.append((value, text))
+        return self
+
+    def empty(self) -> None:
+        return None
+
+
 class DummyStreamlit:
     def __init__(self, sidebar: DummySidebar, chat_input_value: str | None) -> None:
         self.sidebar = sidebar
@@ -191,6 +209,9 @@ class DummyStreamlit:
         self.chat_messages = []
         self.markdowns = []
         self.tabs_created = []
+        self.warnings = []
+        self.progress_updates = []
+        self.placeholder_markdowns = []
 
     def title(self, text: str) -> None:
         self.title_text = text
@@ -213,6 +234,9 @@ class DummyStreamlit:
     def info(self, text: str) -> None:
         self.infos.append(text)
 
+    def warning(self, text: str) -> None:
+        self.warnings.append(text)
+
     def download_button(self, label: str, data, file_name: str, mime: str) -> None:
         self.download_buttons.append((label, file_name, mime, data))
 
@@ -225,6 +249,13 @@ class DummyStreamlit:
     def tabs(self, labels):
         self.tabs_created = labels
         return [DummyContainer() for _ in labels]
+
+    def progress(self, value: float, text: str | None = None):
+        self.progress_updates.append((value, text))
+        return DummyPlaceholder(progress_updates=self.progress_updates)
+
+    def empty(self):
+        return DummyPlaceholder(markdowns=self.placeholder_markdowns)
 
     def chat_input(self, _placeholder: str):
         return self._chat_input_value
@@ -321,10 +352,14 @@ def _base_config(api_key: str | None) -> dict:
             "ticker_validation_error": "No valid tickers found.",
             "weights_fallback_message": "Could not parse weights. Using equal weights.",
             "weights_tickers_dropped": "Note: {dropped} received zero weight.",
+            "fetch_progress_start": "Fetching ticker data...",
+            "fetch_progress_ticker": "Fetching {ticker} ({current}/{total})",
+            "history_fetch_warning": "No historical price data found for: {tickers}. These were skipped.",
+            "history_fetch_all_failed": "Could not fetch historical price data for any suggested ticker. Please try a different request.",
             "history_empty_message": "History empty",
-            "financials_empty_message": "Financials empty",
             "portfolio_empty_message": "Portfolio empty",
             "post_analysis_nudge": "Check other tabs",
+            "portfolio_tab_link": "Open the **Portfolio** tab above to review allocation and performance.",
             "suggested_label": "Suggested",
             "ticker_header_template": "Data for {ticker}",
             "section_history": "History",
@@ -336,7 +371,6 @@ def _base_config(api_key: str | None) -> dict:
             "max_tickers_warning": "Limiting to {max_tickers}",
             "history_ticker_label": "History tickers",
             "history_tab_label": "History",
-            "financials_tab_label": "Financials",
             "portfolio_tab_label": "Portfolio",
             "portfolio_output_label": "Recommended Portfolio",
             "portfolio_stats_label": "Portfolio Stats",
@@ -441,7 +475,7 @@ def test_run_dashboard_prompt_flow(monkeypatch):
     monkeypatch.setattr(
         "src.dashboard.fetch_stock_data",
         lambda *_args, **_kwargs: {
-            "history": pd.DataFrame({"price": [1]}),
+            "history": pd.DataFrame({"Close": [1.0]}),
             "financials": pd.DataFrame({"metric": ["rev"]}),
         },
     )
@@ -449,13 +483,15 @@ def test_run_dashboard_prompt_flow(monkeypatch):
     run_dashboard(_base_config(api_key="key"))
 
     assert sidebar.write_args == ("Suggested", ["AAPL", "MSFT"])
-    assert len(st.tabs_created) == 4
+    assert len(st.tabs_created) == 3
     assert len(st.dataframes) == 0
-    assert len(st.download_buttons) == 4
-    assert len(st.plots) == 5
+    assert len(st.download_buttons) == 2
+    assert len(st.plots) == 3
+    assert st.progress_updates
     assert "Suggested tickers: AAPL, MSFT" in st.markdowns
     assert "analysis" in st.markdowns
     assert "Check other tabs" in st.markdowns
+    assert "Open the **Portfolio** tab above to review allocation and performance." in st.markdowns
 
 
 def test_run_dashboard_invalid_ticker_output(monkeypatch, caplog):
@@ -501,7 +537,7 @@ def test_run_dashboard_weights_normalized(monkeypatch):
     monkeypatch.setattr(
         "src.dashboard.fetch_stock_data",
         lambda *_args, **_kwargs: {
-            "history": pd.DataFrame({"price": [1]}),
+            "history": pd.DataFrame({"Close": [1.0]}),
             "financials": pd.DataFrame({"metric": ["rev"]}),
         },
     )
@@ -541,7 +577,7 @@ def test_run_dashboard_weights_dropped_tickers(monkeypatch):
     monkeypatch.setattr(
         "src.dashboard.fetch_stock_data",
         lambda *_args, **_kwargs: {
-            "history": pd.DataFrame({"price": [1]}),
+            "history": pd.DataFrame({"Close": [1.0]}),
             "financials": pd.DataFrame({"metric": ["rev"]}),
         },
     )
@@ -579,7 +615,7 @@ def test_run_dashboard_unparseable_weights_fallback(monkeypatch):
     monkeypatch.setattr(
         "src.dashboard.fetch_stock_data",
         lambda *_args, **_kwargs: {
-            "history": pd.DataFrame({"price": [1]}),
+            "history": pd.DataFrame({"Close": [1.0]}),
             "financials": pd.DataFrame({"metric": ["rev"]}),
         },
     )
@@ -598,5 +634,75 @@ def test_run_dashboard_tabs_show_empty_states_without_tickers(monkeypatch):
     run_dashboard(_base_config(api_key="key"))
 
     assert "History empty" in st.infos
-    assert "Financials empty" in st.infos
     assert "Portfolio empty" in st.infos
+
+
+def test_run_dashboard_warns_for_missing_history(monkeypatch):
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value="prompt")
+    monkeypatch.setattr("src.dashboard.st", st)
+
+    monkeypatch.setattr(
+        "src.dashboard.create_openrouter_client",
+        lambda **_kwargs: DummyClient(
+            [
+                "AAPL, MSFT",
+                '{"weights": {"AAPL": 1.0}}',
+                "analysis",
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "src.dashboard.create_massive_client",
+        lambda **_kwargs: DummyMassiveClient(),
+    )
+    monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_allocation", lambda *_args, **_kwargs: "allocation")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
+
+    def _fetch(*args, **_kwargs):
+        ticker = args[0]
+        if ticker == "MSFT":
+            return {
+                "history": pd.DataFrame(),
+                "financials": pd.DataFrame({"metric": ["rev"]}),
+            }
+        return {
+            "history": pd.DataFrame({"Close": [1.0]}),
+            "financials": pd.DataFrame({"metric": ["rev"]}),
+        }
+
+    monkeypatch.setattr("src.dashboard.fetch_stock_data", _fetch)
+
+    run_dashboard(_base_config(api_key="key"))
+
+    assert any("MSFT" in warning for warning in st.warnings)
+    assert any("MSFT" in message for message in st.markdowns)
+    assert sidebar.write_args == ("Suggested", ["AAPL"])
+
+
+def test_run_dashboard_all_history_fetches_fail(monkeypatch):
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value="prompt")
+    monkeypatch.setattr("src.dashboard.st", st)
+
+    monkeypatch.setattr(
+        "src.dashboard.create_openrouter_client",
+        lambda **_kwargs: DummyClient(["AAPL, MSFT"]),
+    )
+    monkeypatch.setattr(
+        "src.dashboard.create_massive_client",
+        lambda **_kwargs: DummyMassiveClient(),
+    )
+    monkeypatch.setattr(
+        "src.dashboard.fetch_stock_data",
+        lambda *_args, **_kwargs: {
+            "history": pd.DataFrame(),
+            "financials": pd.DataFrame(),
+        },
+    )
+
+    run_dashboard(_base_config(api_key="key"))
+
+    assert "Could not fetch historical price data for any suggested ticker. Please try a different request." in st.markdowns
+    assert sidebar.write_args == ("Suggested", [])

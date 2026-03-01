@@ -25,7 +25,6 @@ from src.llm_validation import (
     parse_weights_payload,
 )
 from src.plots import (
-    plot_financials,
     plot_history,
     plot_portfolio_allocation,
     plot_portfolio_returns,
@@ -263,11 +262,10 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         [
             ui["chat_tab_label"],
             ui["history_tab_label"],
-            ui["financials_tab_label"],
             ui["portfolio_tab_label"],
         ]
     )
-    chat_tab, history_tab, financials_tab, portfolio_tab = tabs
+    chat_tab, history_tab, portfolio_tab = tabs
 
     with chat_tab:
         for message in st.session_state["messages"]:
@@ -337,13 +335,81 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         massive_client = create_massive_client(api_key=massive_api_key)
 
         data_by_ticker: Dict[str, Dict[str, Any]] = {}
-        for ticker in tickers:
-            data_by_ticker[ticker] = fetch_stock_data(
-                ticker,
-                history_period=stocks_cfg["history_period"],
-                financials_period=stocks_cfg["financials_period"],
-                massive_client=massive_client,
+        tickers_with_history: List[str] = []
+        failed_history_tickers: List[str] = []
+        total_tickers = len(tickers)
+        progress_text = ui.get("fetch_progress_start", "Fetching market data...")
+        with chat_tab:
+            progress = st.progress(0.0, text=progress_text)
+            ticker_status = st.empty()
+
+        for index, ticker in enumerate(tickers, start=1):
+            ticker_status.markdown(
+                ui.get(
+                    "fetch_progress_ticker",
+                    "Fetching {ticker} ({current}/{total})",
+                ).format(
+                    ticker=ticker,
+                    current=index,
+                    total=total_tickers,
+                )
             )
+            try:
+                ticker_data = fetch_stock_data(
+                    ticker,
+                    history_period=stocks_cfg["history_period"],
+                    financials_period=stocks_cfg["financials_period"],
+                    massive_client=massive_client,
+                )
+            except Exception:
+                logger.exception("Failed to fetch ticker data for %s", ticker)
+                failed_history_tickers.append(ticker)
+                progress.progress(
+                    index / total_tickers,
+                    text=progress_text,
+                )
+                continue
+
+            history = ticker_data.get("history", pd.DataFrame())
+            if history is None or history.empty or "Close" not in history.columns:
+                failed_history_tickers.append(ticker)
+                progress.progress(
+                    index / total_tickers,
+                    text=progress_text,
+                )
+                continue
+
+            data_by_ticker[ticker] = ticker_data
+            tickers_with_history.append(ticker)
+            progress.progress(
+                index / total_tickers,
+                text=progress_text,
+            )
+
+        ticker_status.empty()
+        progress.empty()
+
+        if failed_history_tickers:
+            warning_message = ui.get(
+                "history_fetch_warning",
+                "No historical data was found for: {tickers}",
+            ).format(tickers=", ".join(failed_history_tickers))
+            with chat_tab:
+                st.warning(warning_message)
+            _push_chat_message("assistant", warning_message, chat_tab)
+
+        if not tickers_with_history:
+            _push_chat_message(
+                "assistant",
+                ui.get(
+                    "history_fetch_all_failed",
+                    "No valid historical data could be fetched for the suggested tickers. Try a different request.",
+                ),
+                chat_tab,
+            )
+            return
+
+        tickers = tickers_with_history
 
         summary_text = build_portfolio_summary(
             tickers=tickers,
@@ -429,10 +495,12 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         analysis_text = _extract_message_text(analysis_response)
         _push_chat_message("assistant", analysis_text, chat_tab)
         _push_chat_message("assistant", ui["post_analysis_nudge"], chat_tab)
+        portfolio_link_message = ui.get("portfolio_tab_link")
+        if portfolio_link_message:
+            _push_chat_message("assistant", portfolio_link_message, chat_tab)
 
         st.session_state["tickers"] = tickers
         st.session_state["data_by_ticker"] = data_by_ticker
-        st.session_state["selected_history_tickers"] = tickers
         st.session_state["weights"] = weights
         st.session_state["portfolio_allocation"] = allocation
         st.session_state["portfolio_stats"] = portfolio_stats
@@ -442,17 +510,6 @@ def run_dashboard(config: Dict[str, Any]) -> None:
 
     tickers = st.session_state.get("tickers", [])
     st.sidebar.write(ui["suggested_label"], tickers)
-    if tickers:
-        stored = st.session_state.get("selected_history_tickers")
-        if stored is None or not set(stored).issubset(set(tickers)):
-            st.session_state["selected_history_tickers"] = list(tickers)
-        selected_history_tickers = st.sidebar.multiselect(
-            ui["history_ticker_label"],
-            options=tickers,
-            key="selected_history_tickers",
-        )
-    else:
-        selected_history_tickers = []
 
     data_by_ticker = st.session_state.get("data_by_ticker", {})
 
@@ -462,7 +519,7 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         else:
             history_fig = plot_history(
                 {ticker: data["history"] for ticker, data in data_by_ticker.items()},
-                selected_tickers=selected_history_tickers,
+                selected_tickers=tickers,
             )
             if history_fig is not None:
                 st.plotly_chart(history_fig, use_container_width=True)
@@ -474,30 +531,6 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                     label=f"{ui['download_history_label']} ({ticker})",
                     data=_df_to_csv_bytes(history),
                     file_name=f"{ticker}_history.csv",
-                    mime="text/csv",
-                )
-
-    with financials_tab:
-        if not tickers:
-            st.info(ui["financials_empty_message"])
-        else:
-            for ticker in tickers:
-                st.subheader(ui["ticker_header_template"].format(ticker=ticker))
-                data = data_by_ticker.get(ticker, {})
-                financials_fig = plot_financials(
-                    data.get("financials", pd.DataFrame()),
-                    metrics=stocks_cfg["financials_metrics"],
-                    title=f"{ticker} Financials",
-                )
-                if financials_fig is not None:
-                    st.plotly_chart(financials_fig, use_container_width=True)
-
-                st.caption(ui["download_prompt"])
-                financials = data.get("financials", pd.DataFrame())
-                st.download_button(
-                    label=f"{ui['download_financials_label']} ({ticker})",
-                    data=_df_to_csv_bytes(financials),
-                    file_name=f"{ticker}_financials.csv",
                     mime="text/csv",
                 )
 

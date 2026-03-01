@@ -11,8 +11,9 @@ The YFinance Agent is a Python-based application designed to help users build pe
 ## Features
 1. **User Input Handling**: Accepts natural language input to understand user preferences for portfolio creation.
 2. **Stock Data Retrieval**: Fetches financial data from Massive.com, including historical prices and financial statements (income statement, balance sheet, cash flow).
-3. **Filtering and Analysis**: Applies user-defined filters and performs backtesting and forecasting.
-4. **Interactive Dashboard**: Visualizes data and analysis results using Streamlit.
+3. **Resilient Ticker Fetching**: Shows in-chat progress while fetching each ticker and warns when historical data is unavailable for specific symbols.
+4. **Filtering and Analysis**: Applies user-defined filters and performs backtesting and forecasting.
+5. **Interactive Dashboard**: Uses Chat, Historical Prices, and Portfolio tabs, with a post-analysis nudge to open Portfolio results.
 
 ## Project Structure
 ```
