@@ -5,8 +5,6 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List, Optional
 
-import pandas as pd
-
 from src.agents.base import AgentResult, BaseAgent
 from src.data_client import create_massive_client, fetch_stock_data
 from src.llm_validation import (
@@ -14,13 +12,15 @@ from src.llm_validation import (
     has_valid_tickers,
     parse_weights_payload,
 )
+from src.agent_models import CreatorContext, CreatorPrompts
 from src.portfolio import allocate_portfolio_by_weights, normalize_weights
 from src.prompt_validation import (
     PortfolioPromptValidator,
     PromptValidationRunner,
     TickerPromptValidator,
 )
-from src.summaries import build_portfolio_summary
+from src.tickr_data_manager import TickrDataManager
+from src.tickr_summary_manager import TickrSummaryManager
 
 
 logger = logging.getLogger(__name__)
@@ -48,6 +48,8 @@ class PortfolioCreatorAgent(BaseAgent):
         *,
         massive_client_factory: Callable[[str], Any] = create_massive_client,
         stock_data_fetcher: Callable[..., Dict[str, Any]] = fetch_stock_data,
+        tickr_data_manager: TickrDataManager | None = None,
+        tickr_summary_manager: TickrSummaryManager | None = None,
     ) -> None:
         super().__init__(llm_service, config)
         self._massive_client_factory = massive_client_factory
@@ -55,10 +57,36 @@ class PortfolioCreatorAgent(BaseAgent):
         self._validation_runner = PromptValidationRunner(config.get("validations", {}))
         self._ticker_validator = TickerPromptValidator()
         self._portfolio_validator = PortfolioPromptValidator()
+        self._tickr_data_manager = tickr_data_manager or TickrDataManager()
+        self._tickr_summary_manager = tickr_summary_manager or TickrSummaryManager()
+
+    @staticmethod
+    def _apply_feedback_tickers(
+        recommended_tickers: List[str],
+        add: List[str],
+        remove: List[str],
+        max_tickers: int,
+    ) -> tuple[List[str], List[str]]:
+        deduped: List[str] = []
+        for ticker in recommended_tickers:
+            ticker_up = str(ticker).upper()
+            if ticker_up not in deduped:
+                deduped.append(ticker_up)
+
+        remove_set = {ticker.upper() for ticker in remove}
+        for ticker in add:
+            ticker_up = str(ticker).upper()
+            if ticker_up not in deduped and ticker_up not in remove_set:
+                deduped.append(ticker_up)
+
+        filtered = [ticker for ticker in deduped if ticker not in remove_set]
+        if max_tickers > 0:
+            filtered = filtered[:max_tickers]
+        return filtered, sorted(remove_set)
 
     def _get_recommended_tickers(
         self,
-        user_query: str,
+        context: CreatorContext,
         max_tickers: int,
         *,
         session_id: Optional[str] = None,
@@ -72,30 +100,36 @@ class PortfolioCreatorAgent(BaseAgent):
         models_cfg = openrouter_cfg.get("models", {})
         dashboard_cfg = self.config.get("dashboard", {})
 
-        ticker_system_template = prompts_cfg.get("ticker_system", self.DEFAULT_TICKER_SYSTEM)
-        ticker_template = prompts_cfg.get("ticker_template", self.DEFAULT_TICKER_TEMPLATE)
+        prompts = CreatorPrompts(
+            ticker_system=prompts_cfg.get("ticker_system", self.DEFAULT_TICKER_SYSTEM),
+            ticker_template=prompts_cfg.get("ticker_template", self.DEFAULT_TICKER_TEMPLATE),
+            ticker_followup_system=prompts_cfg.get("creator_followup_system", self.DEFAULT_TICKER_SYSTEM),
+            ticker_followup_template=prompts_cfg.get("creator_followup_template", self.DEFAULT_TICKER_TEMPLATE),
+            weights_system=prompts_cfg.get("weights_system", self.DEFAULT_WEIGHTS_SYSTEM),
+            weights_template=prompts_cfg.get("weights_template", self.DEFAULT_WEIGHTS_TEMPLATE),
+        )
 
         self._validation_runner.validate_input(
             "ticker",
             self._ticker_validator,
             {
-                "user_query": user_query,
+                "user_query": context.user_input,
                 "max_tickers": max_tickers,
             },
         )
 
         if followup:
-            system_prompt = prompts_cfg.get("creator_followup_system", ticker_system_template).format(
+            system_prompt = prompts.ticker_followup_system.format(
                 num_tickers=max_tickers
             )
-            prompt = prompts_cfg.get("creator_followup_template", ticker_template).format(
-                user_input=user_query,
+            prompt = prompts.ticker_followup_template.format(
+                user_input=context.user_input,
                 num_tickers=max_tickers,
             )
             request_name = "ticker_generation_followup"
         else:
-            system_prompt = ticker_system_template.format(num_tickers=max_tickers)
-            prompt = ticker_template.format(user_input=user_query, num_tickers=max_tickers)
+            system_prompt = prompts.ticker_system.format(num_tickers=max_tickers)
+            prompt = prompts.ticker_template.format(user_input=context.user_input, num_tickers=max_tickers)
             request_name = "ticker_generation"
 
         response, _ = self.llm_service.complete(
@@ -128,49 +162,27 @@ class PortfolioCreatorAgent(BaseAgent):
         except TypeError:
             # Test doubles may still expose a zero-arg factory.
             massive_client = self._massive_client_factory()
-        data_by_ticker: Dict[str, Dict[str, Any]] = {}
-        tickers_with_history: List[str] = []
-        failed_history_by_status: Dict[str, List[str]] = {
-            "rate_limited": [],
-            "not_found": [],
-            "empty_data": [],
-            "unexpected_error": [],
-        }
 
-        for ticker in tickers:
+        def _fetcher_proxy(**kwargs: Any) -> Dict[str, Any]:
             try:
-                try:
-                    ticker_data = self._stock_data_fetcher(
-                        ticker,
-                        stocks_cfg.get("history_period", "1y"),
-                        stocks_cfg.get("financials_period", "quarterly"),
-                        massive_client,
-                    )
-                except TypeError:
-                    ticker_data = self._stock_data_fetcher(
-                        ticker=ticker,
-                        history_period=stocks_cfg.get("history_period", "1y"),
-                        financials_period=stocks_cfg.get("financials_period", "quarterly"),
-                        massive_client=massive_client,
-                    )
-            except Exception:
-                failed_history_by_status["unexpected_error"].append(ticker)
-                continue
+                return self._stock_data_fetcher(
+                    kwargs["ticker"],
+                    kwargs["history_period"],
+                    kwargs["financials_period"],
+                    kwargs["massive_client"],
+                )
+            except TypeError:
+                return self._stock_data_fetcher(**kwargs)
 
-            history = ticker_data.get("history", pd.DataFrame())
-            history_status = ticker_data.get("history_status", "ok")
-            if history is None or history.empty or "Close" not in history.columns:
-                if history_status not in failed_history_by_status:
-                    history_status = "unexpected_error"
-                if history_status == "ok":
-                    history_status = "empty_data"
-                failed_history_by_status[history_status].append(ticker)
-                continue
+        result = self._tickr_data_manager.fetch_for_tickers(
+            tickers=tickers,
+            fetcher=_fetcher_proxy,
+            history_period=stocks_cfg.get("history_period", "1y"),
+            financials_period=stocks_cfg.get("financials_period", "quarterly"),
+            massive_client=massive_client,
+        )
 
-            data_by_ticker[ticker] = ticker_data
-            tickers_with_history.append(ticker)
-
-        return data_by_ticker, tickers_with_history, failed_history_by_status
+        return result.data_by_ticker, result.tickers_with_history, result.failed_history_by_status
 
     def _generate_weights(
         self,
@@ -240,16 +252,23 @@ class PortfolioCreatorAgent(BaseAgent):
         context: Dict[str, Any],
         *,
         followup: bool,
+        feedback: Dict[str, Any] | None = None,
     ) -> AgentResult:
-        user_input = context["user_input"]
-        portfolio_size = float(context["portfolio_size"])
+        creator_context = CreatorContext(
+            user_input=context["user_input"],
+            portfolio_size=float(context["portfolio_size"]),
+            session_id=context.get("session_id"),
+            run_id=context.get("run_id"),
+        )
+        user_input = creator_context.user_input
+        portfolio_size = creator_context.portfolio_size
         stocks_cfg = self.config.get("stocks", {})
         max_tickers = int(stocks_cfg.get("max_tickers", 10))
-        session_id = context.get("session_id")
-        run_id = context.get("run_id")
+        session_id = creator_context.session_id
+        run_id = creator_context.run_id
 
         recommended_tickers, ticker_raw_output = self._get_recommended_tickers(
-            user_query=user_input,
+            context=creator_context,
             max_tickers=max_tickers,
             session_id=session_id,
             run_id=run_id,
@@ -265,6 +284,15 @@ class PortfolioCreatorAgent(BaseAgent):
             },
         )
         merged_tickers = recommended_tickers[:max_tickers] if max_tickers > 0 else []
+        feedback = feedback or {}
+        add_tickers = [str(item).upper() for item in feedback.get("add", [])]
+        remove_tickers = [str(item).upper() for item in feedback.get("remove", [])]
+        merged_tickers, excluded_tickers = self._apply_feedback_tickers(
+            merged_tickers,
+            add=add_tickers,
+            remove=remove_tickers,
+            max_tickers=max_tickers,
+        )
 
         if not has_valid_tickers(merged_tickers):
             logger.warning(
@@ -283,10 +311,11 @@ class PortfolioCreatorAgent(BaseAgent):
                 )
             raise ValueError("Could not fetch historical price data for any suggested ticker.")
 
-        summary_text = build_portfolio_summary(
+        summary_text = self._tickr_summary_manager.build_or_get_summary(
             tickers=tickers_with_history,
             data_by_ticker=data_by_ticker,
             financial_metrics=stocks_cfg.get("financials_metrics", []),
+            data_version=self._tickr_data_manager.cache_version,
         )
         weights, weights_meta = self._generate_weights(
             user_input=user_input,
@@ -310,6 +339,7 @@ class PortfolioCreatorAgent(BaseAgent):
             allocation=allocation,
             metadata={
                 "recommended_tickers": recommended_tickers,
+                "excluded_tickers": excluded_tickers,
                 "ticker_raw_output": ticker_raw_output,
                 "failed_history_by_status": failed_history,
                 "validation_errors": validation_errors,
@@ -321,5 +351,4 @@ class PortfolioCreatorAgent(BaseAgent):
         return self._run(context, followup=False)
 
     def run_followup(self, context: Dict[str, Any], feedback: Dict[str, Any]) -> AgentResult:
-        _ = feedback
-        return self._run(context, followup=True)
+        return self._run(context, followup=True, feedback=feedback)

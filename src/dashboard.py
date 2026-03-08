@@ -6,7 +6,6 @@ Python SDK.
 
 from __future__ import annotations
 
-import json
 import logging
 import re
 import uuid
@@ -30,22 +29,21 @@ from src.data_client import (
 )
 from src.llm_validation import (
     extract_valid_tickers,
-    has_valid_tickers,
-    parse_weights_payload,
 )
 from src.plots import (
     plot_history,
     plot_portfolio_allocation,
     plot_portfolio_returns,
 )
-from src.portfolio import allocate_portfolio_by_weights, format_portfolio_allocation, normalize_weights
 from src.summaries import (
     build_portfolio_returns_series,
-    build_portfolio_summary,
     summarize_portfolio_financials,
     summarize_portfolio_stats,
 )
 from src.llm_service import LLMService
+from src.portfolio_display_summary import PortfolioDisplaySummary
+from src.tickr_data_manager import TickrDataManager
+from src.tickr_summary_manager import TickrSummaryManager
 
 
 logger = logging.getLogger(__name__)
@@ -260,6 +258,10 @@ def _init_state(default_user_input: str, default_portfolio_size: float, chat_int
     state.setdefault("agent_iteration", 0)
     state.setdefault("pending_suggestions", {})
     state.setdefault("orchestrator", None)
+    state.setdefault("recommended_tickers", [])
+    state.setdefault("excluded_tickers", [])
+    state.setdefault("tickr_data_manager", TickrDataManager())
+    state.setdefault("tickr_summary_manager", TickrSummaryManager())
 
 
 def _push_chat_message(role: str, content: str, container) -> None:
@@ -280,6 +282,8 @@ def _apply_orchestrator_state(orchestrator_state: Any) -> None:
     st.session_state["analysis_text"] = evaluator_result.analysis_text
     st.session_state["pending_suggestions"] = orchestrator_state.pending_suggestions
     st.session_state["agent_iteration"] = orchestrator_state.iteration
+    st.session_state["recommended_tickers"] = list(orchestrator_state.recommended_tickers)
+    st.session_state["excluded_tickers"] = list(orchestrator_state.excluded_tickers)
 
     portfolio_series = build_portfolio_returns_series(
         {ticker: data["history"] for ticker, data in creator_result.data_by_ticker.items()},
@@ -320,11 +324,6 @@ def run_dashboard(config: Dict[str, Any]) -> None:
     )
 
     api_cfg = openrouter_cfg["api"]
-    models_cfg = openrouter_cfg["models"]
-    outputs_cfg = openrouter_cfg["outputs"]
-    temperatures_cfg = openrouter_cfg["temperatures"]
-    prompts_cfg = openrouter_cfg["prompts"]
-
     api_key = api_cfg.get("api_key")
     if not api_key:
         st.sidebar.error(ui["missing_api_key"])
@@ -363,11 +362,14 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             },
         )
         llm_service = LLMService(client)
+        display_summary = PortfolioDisplaySummary()
         creator_agent = PortfolioCreatorAgent(
             llm_service=llm_service,
             config=config,
             massive_client_factory=create_massive_client,
             stock_data_fetcher=fetch_stock_data,
+            tickr_data_manager=st.session_state["tickr_data_manager"],
+            tickr_summary_manager=st.session_state["tickr_summary_manager"],
         )
         evaluator_agent = PortfolioEvaluatorAgent(llm_service=llm_service, config=config)
         orchestrator = AgentOrchestrator(
@@ -385,6 +387,7 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                 run_id=run_id,
             )
             progress.progress(1.0, text=progress_text)
+            progress.empty()
         except ValueError as exc:
             progress.empty()
             error_text = str(exc)
@@ -406,8 +409,6 @@ def run_dashboard(config: Dict[str, Any]) -> None:
             else:
                 _push_chat_message("assistant", error_text, chat_tab)
             return
-
-            progress.empty()
 
         st.session_state["orchestrator_state"] = orchestrator_state
         _apply_orchestrator_state(orchestrator_state)
@@ -464,7 +465,7 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         if orchestrator_state.pending_suggestions:
             _push_chat_message(
                 "assistant",
-                f"{ui.get('evaluator_changes_label', 'Suggested portfolio changes')}: {json.dumps(orchestrator_state.pending_suggestions)}",
+                display_summary.format_suggestions(orchestrator_state.pending_suggestions),
                 chat_tab,
             )
         else:
@@ -497,6 +498,12 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                 st.session_state["orchestrator_state"] = updated_state
                 _apply_orchestrator_state(updated_state)
                 _push_chat_message("assistant", updated_state.evaluator_result.analysis_text, chat_tab)
+                if updated_state.pending_suggestions:
+                    _push_chat_message(
+                        "assistant",
+                        PortfolioDisplaySummary().format_suggestions(updated_state.pending_suggestions),
+                        chat_tab,
+                    )
                 if updated_state.status == STATUS_MAX_ITERATIONS_REACHED:
                     _push_chat_message(
                         "assistant",
@@ -538,6 +545,15 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         if not tickers:
             st.info(ui["portfolio_empty_message"])
         else:
+            st.write(PortfolioDisplaySummary().format_portfolio_header(tickers))
+            st.write(
+                f"{ui.get('recommended_label', 'Recommended Tickers:')} "
+                f"{st.session_state.get('recommended_tickers', [])}"
+            )
+            st.write(
+                f"{ui.get('excluded_label', 'Tickers to Exclude:')} "
+                f"{st.session_state.get('excluded_tickers', [])}"
+            )
             allocation = st.session_state.get("portfolio_allocation", {})
             if allocation:
                 st.subheader(ui["portfolio_output_label"])
@@ -574,3 +590,8 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                     width="stretch",
                     hide_index=True,
                 )
+
+            pending_suggestions = st.session_state.get("pending_suggestions", {})
+            if pending_suggestions:
+                st.subheader(ui.get("evaluator_changes_label", "Suggested portfolio changes"))
+                st.write(PortfolioDisplaySummary().format_suggestions(pending_suggestions))

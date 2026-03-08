@@ -104,7 +104,7 @@ def test_run_initial_with_legacy_config_keys():
 def test_run_followup_applies_add_remove_feedback():
     llm = DummyLLMService([
         "AAPL, TSLA",
-        '{"weights": {"AAPL": 0.6, "TSLA": 0.4}}',
+        '{"weights": {"AAPL": 0.4, "NVDA": 0.6}}',
     ])
     agent = PortfolioCreatorAgent(
         llm_service=llm,
@@ -113,9 +113,14 @@ def test_run_followup_applies_add_remove_feedback():
         stock_data_fetcher=_fetcher,
     )
 
-    result = agent.run_followup({"user_input": "refine", "portfolio_size": 1000.0}, {"add": ["NVDA"]})
+    result = agent.run_followup(
+        {"user_input": "refine", "portfolio_size": 1000.0},
+        {"add": ["NVDA"], "remove": ["TSLA"]},
+    )
 
-    assert set(result.tickers) == {"AAPL", "TSLA"}
+    assert set(result.tickers) == {"AAPL", "NVDA"}
+    assert result.metadata["recommended_tickers"] == ["AAPL", "TSLA"]
+    assert result.metadata["excluded_tickers"] == ["TSLA"]
 
 
 def test_run_initial_raises_when_no_valid_tickers():

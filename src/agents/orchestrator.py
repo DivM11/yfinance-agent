@@ -21,6 +21,9 @@ class OrchestratorState:
     creator_result: AgentResult = field(default_factory=AgentResult)
     evaluator_result: AgentResult = field(default_factory=AgentResult)
     pending_suggestions: Dict[str, Any] = field(default_factory=dict)
+    selected_tickers: list[str] = field(default_factory=list)
+    recommended_tickers: list[str] = field(default_factory=list)
+    excluded_tickers: list[str] = field(default_factory=list)
 
 
 class AgentOrchestrator:
@@ -78,6 +81,9 @@ class AgentOrchestrator:
             creator_result=creator_result,
             evaluator_result=evaluator_result,
             pending_suggestions=suggestions,
+            selected_tickers=list(creator_result.tickers),
+            recommended_tickers=list(creator_result.metadata.get("recommended_tickers", [])),
+            excluded_tickers=list(creator_result.metadata.get("excluded_tickers", [])),
         )
 
     def apply_changes(
@@ -116,6 +122,9 @@ class AgentOrchestrator:
         state.creator_result = creator_result
         state.evaluator_result = evaluator_result
         state.pending_suggestions = evaluator_result.suggestions if isinstance(evaluator_result.suggestions, dict) else {}
+        state.selected_tickers = list(creator_result.tickers)
+        state.recommended_tickers = list(creator_result.metadata.get("recommended_tickers", []))
+        state.excluded_tickers = list(creator_result.metadata.get("excluded_tickers", []))
         state.iteration += 1
 
         if state.iteration >= self.max_iterations and self._has_actionable_suggestions(state.pending_suggestions):

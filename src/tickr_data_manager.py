@@ -1,0 +1,91 @@
+"""Ticker data caching and refresh management."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any, Callable, Dict, List
+
+import pandas as pd
+
+
+@dataclass
+class TickrDataFetchResult:
+    data_by_ticker: Dict[str, Dict[str, Any]]
+    tickers_with_history: List[str]
+    failed_history_by_status: Dict[str, List[str]]
+    fetched_tickers: List[str]
+
+
+@dataclass
+class TickrDataManager:
+    """Keeps ticker data across iterations and fetches only missing symbols."""
+
+    cache: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    cache_version: int = 0
+
+    def update_ticker(self, ticker: str, payload: Dict[str, Any]) -> None:
+        self.cache[ticker] = payload
+
+    def has_ticker(self, ticker: str) -> bool:
+        return ticker in self.cache
+
+    def get_data_by_ticker(self, tickers: List[str]) -> Dict[str, Dict[str, Any]]:
+        return {ticker: self.cache[ticker] for ticker in tickers if ticker in self.cache}
+
+    def fetch_for_tickers(
+        self,
+        tickers: List[str],
+        fetcher: Callable[..., Dict[str, Any]],
+        *,
+        history_period: str,
+        financials_period: str,
+        massive_client: Any,
+    ) -> TickrDataFetchResult:
+        failed_history_by_status: Dict[str, List[str]] = {
+            "rate_limited": [],
+            "not_found": [],
+            "empty_data": [],
+            "unexpected_error": [],
+        }
+        tickers_with_history: List[str] = []
+        fetched_tickers: List[str] = []
+
+        for ticker in tickers:
+            ticker_data: Dict[str, Any]
+            if self.has_ticker(ticker):
+                ticker_data = self.cache[ticker]
+            else:
+                try:
+                    ticker_data = fetcher(
+                        ticker=ticker,
+                        history_period=history_period,
+                        financials_period=financials_period,
+                        massive_client=massive_client,
+                    )
+                    self.update_ticker(ticker, ticker_data)
+                    fetched_tickers.append(ticker)
+                except Exception:
+                    failed_history_by_status["unexpected_error"].append(ticker)
+                    continue
+
+            history = ticker_data.get("history", pd.DataFrame())
+            history_status = ticker_data.get("history_status", "ok")
+            if history is None or history.empty or "Close" not in history.columns:
+                if history_status not in failed_history_by_status:
+                    history_status = "unexpected_error"
+                if history_status == "ok":
+                    history_status = "empty_data"
+                failed_history_by_status[history_status].append(ticker)
+                continue
+
+            tickers_with_history.append(ticker)
+
+        if fetched_tickers:
+            self.cache_version += 1
+
+        return TickrDataFetchResult(
+            data_by_ticker=self.get_data_by_ticker(tickers_with_history),
+            tickers_with_history=tickers_with_history,
+            failed_history_by_status=failed_history_by_status,
+            fetched_tickers=fetched_tickers,
+        )

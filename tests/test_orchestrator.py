@@ -19,6 +19,7 @@ class DummyCreator:
             weights={"AAPL": 1.0},
             allocation={"AAPL": context["portfolio_size"]},
             summary_text="summary",
+            metadata={"recommended_tickers": ["AAPL"], "excluded_tickers": []},
         )
 
     def run_followup(self, context, feedback):
@@ -28,7 +29,11 @@ class DummyCreator:
             weights={"AAPL": 0.7, "NVDA": 0.3},
             allocation={"AAPL": context["portfolio_size"] * 0.7, "NVDA": context["portfolio_size"] * 0.3},
             summary_text="summary2",
-            metadata={"feedback": feedback},
+            metadata={
+                "feedback": feedback,
+                "recommended_tickers": ["AAPL", "TSLA"],
+                "excluded_tickers": ["TSLA"],
+            },
         )
 
 
@@ -50,10 +55,15 @@ def test_orchestrator_approval_flow():
 
     state = orchestrator.start(user_input="growth", portfolio_size=1000.0)
     assert state.status == STATUS_AWAITING_APPROVAL
+    assert state.selected_tickers == ["AAPL"]
+    assert state.recommended_tickers == ["AAPL"]
 
     updated = orchestrator.apply_changes(state)
     assert updated.status == STATUS_COMPLETE
     assert updated.iteration == 2
+    assert updated.selected_tickers == ["AAPL", "NVDA"]
+    assert updated.recommended_tickers == ["AAPL", "TSLA"]
+    assert updated.excluded_tickers == ["TSLA"]
 
 
 def test_orchestrator_max_iterations():

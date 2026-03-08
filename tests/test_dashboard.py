@@ -3,6 +3,7 @@
 import pandas as pd
 
 from src.dashboard import (
+    _apply_orchestrator_state,
     _extract_message_text,
     _log_backend,
     build_prompt,
@@ -13,6 +14,8 @@ from src.dashboard import (
     parse_tickers,
     run_dashboard,
 )
+from src.agents.base import AgentResult
+from src.agents.orchestrator import OrchestratorState
 
 
 class DummyAgg:
@@ -194,7 +197,12 @@ class DummyPlaceholder:
 
 
 class DummyStreamlit:
-    def __init__(self, sidebar: DummySidebar, chat_input_value: str | None) -> None:
+    def __init__(
+        self,
+        sidebar: DummySidebar,
+        chat_input_value: str | None,
+        button_values: dict[str, bool] | None = None,
+    ) -> None:
         self.sidebar = sidebar
         self.session_state = {}
         self.sidebar.session_state = self.session_state
@@ -215,6 +223,7 @@ class DummyStreamlit:
         self.warnings = []
         self.progress_updates = []
         self.placeholder_markdowns = []
+        self.button_values = button_values or {}
 
     def title(self, text: str) -> None:
         self.title_text = text
@@ -271,6 +280,9 @@ class DummyStreamlit:
 
     def markdown(self, text: str) -> None:
         self.markdowns.append(text)
+
+    def button(self, _label: str, key: str | None = None) -> bool:
+        return bool(self.button_values.get(key or _label, False))
 
 
 def test_build_prompt():
@@ -756,3 +768,80 @@ def test_log_backend_logs_without_print(monkeypatch, caplog):
     _log_backend("hello %s", "world", session_id="session-1", run_id="run-1")
 
     assert "[session=session-1 run=run-1] hello world" in caplog.text
+
+
+def test_apply_orchestrator_state_refreshes_selected_recommended_and_excluded(monkeypatch):
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value=None)
+    monkeypatch.setattr("src.dashboard.st", st)
+
+    st.session_state["_financial_metrics"] = []
+
+    state = OrchestratorState(
+        user_input="prompt",
+        portfolio_size=1000.0,
+        creator_result=AgentResult(
+            tickers=["AAPL", "NVDA"],
+            data_by_ticker={
+                "AAPL": {"history": pd.DataFrame({"Close": [1.0]}), "financials": pd.DataFrame()},
+                "NVDA": {"history": pd.DataFrame({"Close": [2.0]}), "financials": pd.DataFrame()},
+            },
+            weights={"AAPL": 0.5, "NVDA": 0.5},
+            allocation={"AAPL": 500.0, "NVDA": 500.0},
+            metadata={"recommended_tickers": ["AAPL", "TSLA", "NVDA"], "excluded_tickers": ["TSLA"]},
+        ),
+        evaluator_result=AgentResult(analysis_text="analysis"),
+        pending_suggestions={"add": [], "remove": [], "reweight": {}},
+        selected_tickers=["AAPL", "NVDA"],
+        recommended_tickers=["AAPL", "TSLA", "NVDA"],
+        excluded_tickers=["TSLA"],
+    )
+
+    _apply_orchestrator_state(state)
+
+    assert st.session_state["tickers"] == ["AAPL", "NVDA"]
+    assert st.session_state["recommended_tickers"] == ["AAPL", "TSLA", "NVDA"]
+    assert st.session_state["excluded_tickers"] == ["TSLA"]
+    assert set(st.session_state["data_by_ticker"].keys()) == {"AAPL", "NVDA"}
+
+
+def test_run_dashboard_accept_changes_updates_selected_and_suggested(monkeypatch):
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value="prompt", button_values={"accept_changes": True})
+    monkeypatch.setattr("src.dashboard.st", st)
+
+    monkeypatch.setattr(
+        "src.dashboard.create_openrouter_client",
+        lambda **_kwargs: DummyClient(
+            [
+                "AAPL, TSLA",
+                '{"weights": {"AAPL": 0.5, "TSLA": 0.5}}',
+                'analysis {"changes": {"add": ["NVDA"], "remove": ["TSLA"], "reweight": {}}}',
+                "AAPL, MSFT",
+                '{"weights": {"AAPL": 0.5, "NVDA": 0.5}}',
+                'updated {"changes": {"add": [], "remove": [], "reweight": {}}}',
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "src.dashboard.create_massive_client",
+        lambda **_kwargs: DummyMassiveClient(),
+    )
+    monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_allocation", lambda *_args, **_kwargs: "allocation")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
+    monkeypatch.setattr(
+        "src.dashboard.fetch_stock_data",
+        lambda *_args, **_kwargs: {
+            "history": pd.DataFrame({"Close": [1.0, 1.1]}),
+            "financials": pd.DataFrame({"metric": ["rev"]}),
+        },
+    )
+
+    run_dashboard(_base_config(api_key="key"))
+
+    assert "NVDA" in st.session_state["tickers"]
+    assert "TSLA" not in st.session_state["tickers"]
+    assert "TSLA" in st.session_state["excluded_tickers"]
+    assert st.session_state["recommended_tickers"] == ["AAPL", "MSFT"]
+    assert sidebar.write_args == ("Suggested", st.session_state["tickers"])

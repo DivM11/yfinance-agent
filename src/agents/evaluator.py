@@ -6,6 +6,7 @@ import json
 from typing import Any, Dict
 
 from src.agents.base import AgentResult, BaseAgent
+from src.agent_models import EvaluatorContext, EvaluatorPrompts
 from src.llm_validation import parse_evaluator_suggestions
 from src.prompt_validation import AnalysisPromptValidator, PromptValidationRunner
 
@@ -48,37 +49,48 @@ class PortfolioEvaluatorAgent(BaseAgent):
         temperatures_cfg = openrouter_cfg.get("temperatures", {})
         models_cfg = openrouter_cfg.get("models", {})
 
-        analysis_system = prompts_cfg.get("analysis_system", self.DEFAULT_ANALYSIS_SYSTEM)
-        analysis_template = prompts_cfg.get("analysis_template", self.DEFAULT_ANALYSIS_TEMPLATE)
+        prompts = EvaluatorPrompts(
+            analysis_system=prompts_cfg.get("evaluator_system", prompts_cfg.get("analysis_system", self.DEFAULT_ANALYSIS_SYSTEM)),
+            analysis_template=prompts_cfg.get("evaluator_template", prompts_cfg.get("analysis_template", self.DEFAULT_ANALYSIS_TEMPLATE)),
+            analysis_followup_system=prompts_cfg.get(
+                "evaluator_followup_system",
+                prompts_cfg.get("evaluator_system", prompts_cfg.get("analysis_system", self.DEFAULT_ANALYSIS_SYSTEM)),
+            ),
+            analysis_followup_template=prompts_cfg.get(
+                "evaluator_followup_template",
+                prompts_cfg.get("evaluator_template", prompts_cfg.get("analysis_template", self.DEFAULT_ANALYSIS_TEMPLATE)),
+            ),
+        )
+
+        eval_context = EvaluatorContext(
+            user_input=user_input,
+            portfolio_size=portfolio_size,
+            tickers=tuple(tickers),
+            summary_text=summary_text,
+        )
 
         if followup:
-            system_prompt = prompts_cfg.get(
-                "evaluator_followup_system",
-                prompts_cfg.get("evaluator_system", analysis_system),
-            )
-            prompt = prompts_cfg.get(
-                "evaluator_followup_template",
-                prompts_cfg.get("evaluator_template", analysis_template),
-            ).format(
-                user_input=user_input,
-                portfolio_size=portfolio_size,
-                tickers=", ".join(tickers),
+            system_prompt = prompts.analysis_followup_system
+            prompt = prompts.analysis_followup_template.format(
+                user_input=eval_context.user_input,
+                portfolio_size=eval_context.portfolio_size,
+                tickers=", ".join(eval_context.tickers),
                 weights=json.dumps(weights),
                 allocation=json.dumps(allocation),
-                summary=summary_text,
+                summary=eval_context.summary_text,
                 previous_analysis=previous_analysis,
                 applied_changes=json.dumps(applied_changes or {}),
             )
             request_name = "evaluation_followup"
         else:
-            system_prompt = prompts_cfg.get("evaluator_system", analysis_system)
-            prompt = prompts_cfg.get("evaluator_template", analysis_template).format(
-                user_input=user_input,
-                portfolio_size=portfolio_size,
-                tickers=", ".join(tickers),
+            system_prompt = prompts.analysis_system
+            prompt = prompts.analysis_template.format(
+                user_input=eval_context.user_input,
+                portfolio_size=eval_context.portfolio_size,
+                tickers=", ".join(eval_context.tickers),
                 weights=json.dumps(weights),
                 allocation=json.dumps(allocation),
-                summary=summary_text,
+                summary=eval_context.summary_text,
             )
             request_name = "evaluation"
 
@@ -87,8 +99,8 @@ class PortfolioEvaluatorAgent(BaseAgent):
             self._analysis_validator,
             {
                 "user_input": user_input,
-                "tickers": tickers,
-                "summary_text": summary_text,
+                "tickers": eval_context.tickers,
+                "summary_text": eval_context.summary_text,
             },
         )
 
