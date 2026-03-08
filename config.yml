@@ -43,6 +43,11 @@ ui:
   portfolio_empty_message: "Portfolio allocation and metrics will appear here after analysis is complete."
   post_analysis_nudge: "Analysis is ready. Check Historical Prices and Portfolio tabs for detailed views."
   portfolio_tab_link: "Open the **Portfolio** tab above to review allocation and performance."
+  evaluator_changes_label: "Suggested portfolio changes"
+  evaluator_accept_button: "Accept Changes"
+  evaluator_reject_button: "Keep Current Portfolio"
+  evaluator_iter_label: "Iteration {current} of {max_iterations}"
+  evaluator_no_changes: "No further portfolio changes suggested."
   portfolio_output_label: "Recommended Portfolio"
   portfolio_stats_label: "Portfolio Stats"
   portfolio_returns_label: "Portfolio Returns (1Y)"
@@ -58,26 +63,43 @@ openrouter:
 
   models:
     ticker: "anthropic/claude-3.5-haiku"
+    extractor: "anthropic/claude-3.5-haiku"
     weights: "anthropic/claude-3.5-haiku"
     analysis: "anthropic/claude-3.5-haiku"
+    evaluator: "anthropic/claude-3.5-haiku"
 
   outputs:
+    extractor_max_tokens: 50
     ticker_max_tokens: 100
     weights_max_tokens: 400
     analysis_max_tokens: 500
+    evaluator_max_tokens: 800
 
   temperatures:
+    extractor: 0.0
     ticker: 0.2
     weights: 0.1
     analysis: 0.2
+    evaluator: 0.2
 
   prompts:
+    extractor_system: "Extract explicit US ticker symbols from user preferences. Return strict JSON only: {\"include\": [\"AAPL\"], \"exclude\": [\"TSLA\"]}."
+    extractor_template: "User request: {user_input}\nExtract explicitly requested include/exclude tickers. If none, return empty arrays."
     ticker_system: "You are a financial assistant. Return up to {num_tickers} comma-separated US stock tickers. No explanations, no commentary."
     ticker_template: "Create a portfolio with up to {num_tickers} US stock tickers for: {user_input}"
+    creator_followup_system: "You are a financial assistant refining ticker selection. Return up to {num_tickers} comma-separated US stock tickers. No explanations."
+    creator_followup_template: "Refine the portfolio ticker set with up to {num_tickers} US stock tickers based on: {user_input}"
     weights_system: "You are a portfolio allocator. Respond with a single JSON object only. No markdown fences, no explanation, no code blocks."
     weights_template: "Allocate portfolio weights that sum to exactly 1.0 across these tickers.\nReturn ONLY a JSON object: {{\"weights\": {{\"TICKER\": 0.25}}}}\n\nUser preferences: {user_input}\nTickers: {tickers}\nSummary:\n{summary}"
     analysis_system: "You are a financial analyst. Provide a concise evaluation of the recommended tickers."
     analysis_template: "User preferences: {user_input}\nPortfolio size: {portfolio_size}\nTickers: {tickers}\nWeights: {weights}\nAllocation: {allocation}\nSummary:\n{summary}\nProvide a brief evaluation and any risks."
+    evaluator_system: "You are a portfolio evaluator. Return concise analysis and include strict JSON at the end with key 'changes' shaped as {\"changes\": {\"add\": [\"AAPL\"], \"remove\": [\"TSLA\"], \"reweight\": {\"MSFT\": 0.2}}}."
+    evaluator_template: "User preferences: {user_input}\nPortfolio size: {portfolio_size}\nTickers: {tickers}\nWeights: {weights}\nAllocation: {allocation}\nSummary:\n{summary}\nEvaluate the portfolio and suggest changes if needed."
+    evaluator_followup_system: "You are a portfolio evaluator reviewing updated recommendations. Return concise analysis and strict JSON changes at the end."
+    evaluator_followup_template: "User preferences: {user_input}\nPortfolio size: {portfolio_size}\nTickers: {tickers}\nWeights: {weights}\nAllocation: {allocation}\nSummary:\n{summary}\nPrevious analysis: {previous_analysis}\nApplied changes: {applied_changes}\nRe-evaluate and suggest any remaining changes."
+
+agents:
+  max_iterations: 3
 
 stocks:
   history_period: "1y"

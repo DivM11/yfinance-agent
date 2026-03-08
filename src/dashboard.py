@@ -16,6 +16,14 @@ import streamlit as st
 import pandas as pd
 from openai import OpenAI
 
+from src.agents.creator import PortfolioCreatorAgent
+from src.agents.evaluator import PortfolioEvaluatorAgent
+from src.agents.orchestrator import (
+    AgentOrchestrator,
+    STATUS_AWAITING_APPROVAL,
+    STATUS_MAX_ITERATIONS_REACHED,
+)
+
 from src.data_client import (
     create_massive_client,
     fetch_stock_data as _massive_fetch_stock_data,
@@ -37,6 +45,7 @@ from src.summaries import (
     summarize_portfolio_financials,
     summarize_portfolio_stats,
 )
+from src.llm_service import LLMService
 
 
 logger = logging.getLogger(__name__)
@@ -247,6 +256,10 @@ def _init_state(default_user_input: str, default_portfolio_size: float, chat_int
     state.setdefault("portfolio_financials", {})
     state.setdefault("portfolio_series", pd.Series(dtype=float))
     state.setdefault("analysis_text", "")
+    state.setdefault("orchestrator_state", None)
+    state.setdefault("agent_iteration", 0)
+    state.setdefault("pending_suggestions", {})
+    state.setdefault("orchestrator", None)
 
 
 def _push_chat_message(role: str, content: str, container) -> None:
@@ -254,6 +267,31 @@ def _push_chat_message(role: str, content: str, container) -> None:
     with container:
         with st.chat_message(role):
             st.markdown(content)
+
+
+def _apply_orchestrator_state(orchestrator_state: Any) -> None:
+    creator_result = orchestrator_state.creator_result
+    evaluator_result = orchestrator_state.evaluator_result
+
+    st.session_state["tickers"] = creator_result.tickers
+    st.session_state["data_by_ticker"] = creator_result.data_by_ticker
+    st.session_state["weights"] = creator_result.weights
+    st.session_state["portfolio_allocation"] = creator_result.allocation
+    st.session_state["analysis_text"] = evaluator_result.analysis_text
+    st.session_state["pending_suggestions"] = orchestrator_state.pending_suggestions
+    st.session_state["agent_iteration"] = orchestrator_state.iteration
+
+    portfolio_series = build_portfolio_returns_series(
+        {ticker: data["history"] for ticker, data in creator_result.data_by_ticker.items()},
+        creator_result.weights,
+    )
+    st.session_state["portfolio_series"] = portfolio_series
+    st.session_state["portfolio_stats"] = summarize_portfolio_stats(portfolio_series)
+    st.session_state["portfolio_financials"] = summarize_portfolio_financials(
+        {ticker: data["financials"] for ticker, data in creator_result.data_by_ticker.items()},
+        creator_result.weights,
+        st.session_state.get("_financial_metrics", []),
+    )
 
 
 def run_dashboard(config: Dict[str, Any]) -> None:
@@ -264,6 +302,7 @@ def run_dashboard(config: Dict[str, Any]) -> None:
     dashboard = config["dashboard"]
     openrouter_cfg = config["openrouter"]
     stocks_cfg = config["stocks"]
+    st.session_state["_financial_metrics"] = stocks_cfg.get("financials_metrics", [])
 
     _init_state(
         dashboard["default_user_input"],
@@ -311,6 +350,7 @@ def run_dashboard(config: Dict[str, Any]) -> None:
         session_id = _get_session_id()
         run_id = _new_correlation_id()
         _push_chat_message("user", prompt_input, chat_tab)
+
         client = create_openrouter_client(
             api_key=api_key,
             base_url=api_cfg["base_url"],
@@ -319,131 +359,36 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                 "X-Title": api_cfg["app_title"],
             },
         )
+        llm_service = LLMService(client)
+        creator_agent = PortfolioCreatorAgent(llm_service=llm_service, config=config)
+        evaluator_agent = PortfolioEvaluatorAgent(llm_service=llm_service, config=config)
+        orchestrator = AgentOrchestrator(
+            creator_agent=creator_agent,
+            evaluator_agent=evaluator_agent,
+            max_iterations=config.get("agents", {}).get("max_iterations", 3),
+        )
+        st.session_state["orchestrator"] = orchestrator
 
-        num_tickers = stocks_cfg["max_tickers"]
-        ticker_system = prompts_cfg["ticker_system"].format(
-            num_tickers=num_tickers,
-        )
-        prompt = build_prompt(
-            prompts_cfg["ticker_template"], prompt_input,
-            num_tickers=num_tickers,
-        )
-        tickers, ticker_raw_output = generate_tickers(
-            client=client,
-            prompt=prompt,
-            system_prompt=ticker_system,
-            model=models_cfg["ticker"],
-            max_tokens=outputs_cfg["ticker_max_tokens"],
-            temperature=temperatures_cfg["ticker"],
-            delimiter=dashboard["ticker_delimiter"],
-            session_id=session_id,
-            run_id=run_id,
-        )
-
-        if not has_valid_tickers(tickers):
-            _log_backend(
-                "Ticker validation failed. Raw model output from OpenRouter: %s",
-                ticker_raw_output,
+        try:
+            orchestrator_state = orchestrator.start(
+                user_input=prompt_input,
+                portfolio_size=st.session_state["portfolio_size"],
                 session_id=session_id,
                 run_id=run_id,
             )
-            _log_backend(
-                "Ticker validation failed details: output_len=%s output_repr=%r",
-                len(ticker_raw_output or ""),
-                ticker_raw_output,
-                session_id=session_id,
-                run_id=run_id,
-            )
-            _push_chat_message("assistant", ui["ticker_validation_error"], chat_tab)
+        except ValueError as exc:
+            _push_chat_message("assistant", str(exc), chat_tab)
             return
 
-        limited_tickers = limit_tickers(tickers, stocks_cfg["max_tickers"])
-        if len(limited_tickers) < len(tickers):
-            st.sidebar.warning(
-                ui["max_tickers_warning"].format(max_tickers=stocks_cfg["max_tickers"])
-            )
-        tickers = limited_tickers
+        st.session_state["orchestrator_state"] = orchestrator_state
+        _apply_orchestrator_state(orchestrator_state)
+
+        creator_result = orchestrator_state.creator_result
         _push_chat_message(
             "assistant",
-            ui["ticker_reply_template"].format(tickers=", ".join(tickers)),
+            ui["ticker_reply_template"].format(tickers=", ".join(creator_result.tickers)),
             chat_tab,
         )
-
-        massive_api_key = config.get("massive", {}).get("api", {}).get("api_key")
-        if not massive_api_key:
-            st.sidebar.error(ui.get("missing_massive_key", "Missing Massive.com API key. Set MASSIVE_API_KEY in .env."))
-            return
-        massive_client = create_massive_client(api_key=massive_api_key)
-
-        data_by_ticker: Dict[str, Dict[str, Any]] = {}
-        tickers_with_history: List[str] = []
-        failed_history_by_status: Dict[str, List[str]] = {
-            "rate_limited": [],
-            "not_found": [],
-            "empty_data": [],
-            "unexpected_error": [],
-        }
-        total_tickers = len(tickers)
-        progress_text = ui.get("fetch_progress_start", "Fetching market data...")
-        with chat_tab:
-            progress = st.progress(0.0, text=progress_text)
-            ticker_status = st.empty()
-
-        for index, ticker in enumerate(tickers, start=1):
-            ticker_status.markdown(
-                ui.get(
-                    "fetch_progress_ticker",
-                    "Fetching {ticker} ({current}/{total})",
-                ).format(
-                    ticker=ticker,
-                    current=index,
-                    total=total_tickers,
-                )
-            )
-            try:
-                ticker_data = fetch_stock_data(
-                    ticker,
-                    history_period=stocks_cfg["history_period"],
-                    financials_period=stocks_cfg["financials_period"],
-                    massive_client=massive_client,
-                )
-            except Exception:
-                logger.exception(
-                    "[session=%s run=%s] Failed to fetch ticker data for %s",
-                    session_id,
-                    run_id,
-                    ticker,
-                )
-                failed_history_by_status["unexpected_error"].append(ticker)
-                progress.progress(
-                    index / total_tickers,
-                    text=progress_text,
-                )
-                continue
-
-            history = ticker_data.get("history", pd.DataFrame())
-            history_status = ticker_data.get("history_status", "ok")
-            if history is None or history.empty or "Close" not in history.columns:
-                if history_status not in failed_history_by_status:
-                    history_status = "unexpected_error"
-                if history_status == "ok":
-                    history_status = "empty_data"
-                failed_history_by_status[history_status].append(ticker)
-                progress.progress(
-                    index / total_tickers,
-                    text=progress_text,
-                )
-                continue
-
-            data_by_ticker[ticker] = ticker_data
-            tickers_with_history.append(ticker)
-            progress.progress(
-                index / total_tickers,
-                text=progress_text,
-            )
-
-        ticker_status.empty()
-        progress.empty()
 
         warning_templates = {
             "rate_limited": ui.get(
@@ -463,133 +408,76 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                 "Unexpected error while fetching historical price data for: {tickers}. These were skipped.",
             ),
         }
-
+        failed_history_by_status = creator_result.metadata.get("failed_history_by_status", {})
         for status, failed_tickers in failed_history_by_status.items():
             if not failed_tickers:
                 continue
-            warning_message = warning_templates[status].format(tickers=", ".join(failed_tickers))
+            warning_message = warning_templates.get(status, warning_templates["unexpected_error"]).format(
+                tickers=", ".join(failed_tickers)
+            )
             with chat_tab:
                 st.warning(warning_message)
             _push_chat_message("assistant", warning_message, chat_tab)
 
-        if not tickers_with_history:
+        if creator_result.metadata.get("weights_parse_failed"):
+            _push_chat_message("assistant", ui["weights_fallback_message"], chat_tab)
+
+        dropped = creator_result.metadata.get("weights_dropped", [])
+        if dropped:
             _push_chat_message(
                 "assistant",
-                ui.get(
-                    "history_fetch_all_failed",
-                    "No valid historical data could be fetched for the suggested tickers. Try a different request.",
-                ),
+                ui["weights_tickers_dropped"].format(dropped=", ".join(dropped)),
                 chat_tab,
             )
-            return
 
-        tickers = tickers_with_history
+        _push_chat_message("assistant", orchestrator_state.evaluator_result.analysis_text, chat_tab)
 
-        summary_text = build_portfolio_summary(
-            tickers=tickers,
-            data_by_ticker=data_by_ticker,
-            financial_metrics=stocks_cfg["financials_metrics"],
-        )
-
-        weights_prompt = prompts_cfg["weights_template"].format(
-            user_input=prompt_input,
-            tickers=", ".join(tickers),
-            summary=summary_text,
-        )
-        weights_response, _weights_status_code = _create_openrouter_completion(
-            client=client,
-            request_name="weights_generation",
-            model=models_cfg["weights"],
-            max_tokens=outputs_cfg["weights_max_tokens"],
-            temperature=temperatures_cfg["weights"],
-            session_id=session_id,
-            run_id=run_id,
-            messages=[
-                {"role": "system", "content": prompts_cfg["weights_system"]},
-                {"role": "user", "content": weights_prompt},
-            ],
-        )
-        weights_text = _extract_message_text(weights_response)
-        parsed_weights = parse_weights_payload(weights_text)
-        if not parsed_weights:
-            _log_backend(
-                "Weight parsing failed. Raw output: %s",
-                weights_text,
-                session_id=session_id,
-                run_id=run_id,
-            )
+        if orchestrator_state.pending_suggestions:
             _push_chat_message(
                 "assistant",
-                ui["weights_fallback_message"],
+                f"{ui.get('evaluator_changes_label', 'Suggested portfolio changes')}: {json.dumps(orchestrator_state.pending_suggestions)}",
                 chat_tab,
             )
-            weights = normalize_weights({}, tickers)
         else:
-            dropped = sorted(set(tickers) - set(parsed_weights.keys()))
-            if dropped:
-                _push_chat_message(
-                    "assistant",
-                    ui["weights_tickers_dropped"].format(
-                        dropped=", ".join(dropped),
-                    ),
-                    chat_tab,
-                )
-            weights = normalize_weights(parsed_weights, tickers)
+            _push_chat_message("assistant", ui.get("evaluator_no_changes", "No further portfolio changes suggested."), chat_tab)
 
-        allocation = allocate_portfolio_by_weights(
-            tickers=tickers,
-            total_amount=st.session_state["portfolio_size"],
-            weights=weights,
-        )
-        allocation_text = format_portfolio_allocation(allocation)
-
-        portfolio_series = build_portfolio_returns_series(
-            {ticker: data["history"] for ticker, data in data_by_ticker.items()},
-            weights,
-        )
-        portfolio_stats = summarize_portfolio_stats(portfolio_series)
-        portfolio_financials = summarize_portfolio_financials(
-            {ticker: data["financials"] for ticker, data in data_by_ticker.items()},
-            weights,
-            stocks_cfg["financials_metrics"],
-        )
-
-        analysis_prompt = prompts_cfg["analysis_template"].format(
-            user_input=prompt_input,
-            tickers=", ".join(tickers),
-            portfolio_size=st.session_state["portfolio_size"],
-            weights=json.dumps(weights),
-            summary=summary_text,
-            allocation=allocation_text,
-        )
-        analysis_response, _analysis_status_code = _create_openrouter_completion(
-            client=client,
-            request_name="analysis_generation",
-            model=models_cfg["analysis"],
-            max_tokens=outputs_cfg["analysis_max_tokens"],
-            temperature=temperatures_cfg["analysis"],
-            session_id=session_id,
-            run_id=run_id,
-            messages=[
-                {"role": "system", "content": prompts_cfg["analysis_system"]},
-                {"role": "user", "content": analysis_prompt},
-            ],
-        )
-        analysis_text = _extract_message_text(analysis_response)
-        _push_chat_message("assistant", analysis_text, chat_tab)
         _push_chat_message("assistant", ui["post_analysis_nudge"], chat_tab)
         portfolio_link_message = ui.get("portfolio_tab_link")
         if portfolio_link_message:
             _push_chat_message("assistant", portfolio_link_message, chat_tab)
 
-        st.session_state["tickers"] = tickers
-        st.session_state["data_by_ticker"] = data_by_ticker
-        st.session_state["weights"] = weights
-        st.session_state["portfolio_allocation"] = allocation
-        st.session_state["portfolio_stats"] = portfolio_stats
-        st.session_state["portfolio_financials"] = portfolio_financials
-        st.session_state["portfolio_series"] = portfolio_series
-        st.session_state["analysis_text"] = analysis_text
+    orchestrator_state = st.session_state.get("orchestrator_state")
+    orchestrator = st.session_state.get("orchestrator")
+    if orchestrator_state and orchestrator and orchestrator_state.status == STATUS_AWAITING_APPROVAL:
+        if hasattr(st, "button"):
+            with chat_tab:
+                st.markdown(
+                    ui.get("evaluator_iter_label", "Iteration {current} of {max_iterations}").format(
+                        current=orchestrator_state.iteration,
+                        max_iterations=config.get("agents", {}).get("max_iterations", 3),
+                    )
+                )
+                accept = st.button(ui.get("evaluator_accept_button", "Accept Changes"), key="accept_changes")
+                reject = st.button(ui.get("evaluator_reject_button", "Keep Current Portfolio"), key="reject_changes")
+            if accept:
+                updated_state = orchestrator.apply_changes(
+                    orchestrator_state,
+                    session_id=_get_session_id(),
+                    run_id=_new_correlation_id(),
+                )
+                st.session_state["orchestrator_state"] = updated_state
+                _apply_orchestrator_state(updated_state)
+                _push_chat_message("assistant", updated_state.evaluator_result.analysis_text, chat_tab)
+                if updated_state.status == STATUS_MAX_ITERATIONS_REACHED:
+                    _push_chat_message(
+                        "assistant",
+                        ui.get("evaluator_max_reached", "Reached max refinement iterations. Keeping current portfolio."),
+                        chat_tab,
+                    )
+            elif reject:
+                final_state = orchestrator.reject_changes(orchestrator_state)
+                st.session_state["orchestrator_state"] = final_state
+                _push_chat_message("assistant", ui.get("evaluator_rejected", "Keeping current portfolio without changes."), chat_tab)
 
     tickers = st.session_state.get("tickers", [])
     st.sidebar.write(ui["suggested_label"], tickers)

@@ -1,0 +1,86 @@
+"""Unit tests for portfolio creator agent."""
+
+import pandas as pd
+
+from src.agents.creator import PortfolioCreatorAgent
+
+
+class DummyLLMService:
+    def __init__(self, outputs):
+        self.outputs = list(outputs)
+
+    def complete(self, **_kwargs):
+        return {"choices": [{"message": {"content": self.outputs.pop(0)}}]}, 200
+
+    @staticmethod
+    def extract_message_text(response):
+        return response["choices"][0]["message"]["content"]
+
+
+def _config():
+    return {
+        "dashboard": {"ticker_delimiter": ","},
+        "stocks": {
+            "max_tickers": 5,
+            "history_period": "1y",
+            "financials_period": "quarterly",
+            "financials_metrics": ["Total Revenue"],
+        },
+        "massive": {"api": {"api_key": "k"}},
+        "openrouter": {
+            "models": {
+                "extractor": "anthropic/claude-3.5-haiku",
+                "ticker": "anthropic/claude-3.5-haiku",
+                "weights": "anthropic/claude-3.5-haiku",
+            },
+            "outputs": {
+                "extractor_max_tokens": 50,
+                "ticker_max_tokens": 100,
+                "weights_max_tokens": 200,
+            },
+            "temperatures": {"extractor": 0.0, "ticker": 0.2, "weights": 0.1},
+            "prompts": {
+                "extractor_system": "sys",
+                "extractor_template": "{user_input}",
+                "ticker_system": "sys {num_tickers}",
+                "ticker_template": "{user_input}",
+                "weights_system": "sys",
+                "weights_template": "{user_input} {tickers} {summary}",
+            },
+        },
+    }
+
+
+def _fetcher(**kwargs):
+    ticker = kwargs["ticker"]
+    idx = pd.date_range("2025-01-01", periods=3, freq="D")
+    history = pd.DataFrame({"Close": [100.0, 101.0, 102.0]}, index=idx)
+    return {"history": history, "financials": pd.DataFrame(), "history_status": "ok", "ticker": ticker}
+
+
+def test_apply_ticker_overrides():
+    output = PortfolioCreatorAgent.apply_ticker_overrides(
+        ["AAPL", "MSFT"], ["NVDA"], ["MSFT"], max_tickers=5
+    )
+
+    assert output == ["AAPL", "NVDA"]
+
+
+def test_run_initial_builds_portfolio_result():
+    llm = DummyLLMService([
+        '{"include": ["NVDA"], "exclude": []}',
+        "AAPL, MSFT",
+        '{"weights": {"AAPL": 0.5, "MSFT": 0.3, "NVDA": 0.2}}',
+    ])
+    agent = PortfolioCreatorAgent(
+        llm_service=llm,
+        config=_config(),
+        massive_client_factory=lambda _api_key: object(),
+        stock_data_fetcher=_fetcher,
+    )
+
+    result = agent.run_initial({"user_input": "growth with NVDA", "portfolio_size": 1000.0})
+
+    assert set(result.tickers) == {"AAPL", "MSFT", "NVDA"}
+    assert round(sum(result.weights.values()), 3) == 1.0
+    assert round(sum(result.allocation.values()), 2) == 1000.0

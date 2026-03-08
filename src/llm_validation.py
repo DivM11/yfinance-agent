@@ -81,3 +81,57 @@ def parse_weights_payload(text: str) -> Dict[str, float]:
 def validate_weight_sum(weights: Dict[str, float], tolerance: float = 0.02) -> Tuple[bool, float]:
     total = sum(max(0.0, float(value)) for value in weights.values())
     return abs(total - 1.0) <= tolerance, total
+
+
+def parse_include_exclude_payload(text: str) -> Tuple[List[str], List[str]]:
+    cleaned = _extract_json_string(text)
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return [], []
+
+    include: List[str] = []
+    exclude: List[str] = []
+    if isinstance(payload, dict):
+        include_raw = payload.get("include", [])
+        exclude_raw = payload.get("exclude", [])
+        if isinstance(include_raw, list):
+            include = [str(item).upper() for item in include_raw]
+        if isinstance(exclude_raw, list):
+            exclude = [str(item).upper() for item in exclude_raw]
+    return include, exclude
+
+
+def parse_evaluator_suggestions(text: str) -> Dict[str, object]:
+    cleaned = _extract_json_string(text)
+    try:
+        payload = json.loads(cleaned)
+    except json.JSONDecodeError:
+        return {}
+
+    if not isinstance(payload, dict):
+        return {}
+
+    candidate = payload.get("changes", payload)
+    if not isinstance(candidate, dict):
+        return {}
+
+    add_raw = candidate.get("add", [])
+    remove_raw = candidate.get("remove", [])
+    reweight_raw = candidate.get("reweight", {})
+
+    add = [str(item).upper() for item in add_raw] if isinstance(add_raw, list) else []
+    remove = [str(item).upper() for item in remove_raw] if isinstance(remove_raw, list) else []
+    reweight: Dict[str, float] = {}
+    if isinstance(reweight_raw, dict):
+        for ticker, value in reweight_raw.items():
+            try:
+                reweight[str(ticker).upper()] = float(value)
+            except (TypeError, ValueError):
+                continue
+
+    return {
+        "add": add,
+        "remove": remove,
+        "reweight": reweight,
+    }
