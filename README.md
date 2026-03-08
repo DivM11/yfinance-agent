@@ -15,6 +15,48 @@ The YFinance Agent is a Python-based application designed to help users build pe
 4. **Filtering and Analysis**: Applies user-defined filters and performs backtesting and forecasting.
 5. **Interactive Dashboard**: Uses Chat, Historical Prices, and Portfolio tabs, with a post-analysis nudge to open Portfolio results.
 
+## Agent Design
+
+### High-Level Design
+- The app follows a two-agent orchestration flow:
+   - **PortfolioCreatorAgent** builds the portfolio (ticker recommendation, market data retrieval, summary generation, and weight allocation).
+   - **PortfolioEvaluatorAgent** evaluates the produced portfolio, generates analysis, and suggests updates.
+- **AgentOrchestrator** controls the workflow loop:
+   - `start()` runs Creator then Evaluator.
+   - `apply_changes()` re-runs Creator and Evaluator with evaluator feedback.
+   - `reject_changes()` finalizes the current portfolio.
+- A **human-in-the-loop** step is built into the chat UI:
+   - Users can accept or reject suggested changes.
+   - Iteration count is bounded by `agents.max_iterations` in `config.yml`.
+
+### Low-Level Design
+- **Creator pipeline (per run):**
+   1. Validate ticker prompt input/output (runtime-configurable).
+   2. Generate recommended tickers from LLM.
+   3. Apply follow-up feedback (`add`/`remove`) when present.
+   4. Fetch missing ticker data through `TickrDataManager` cache.
+   5. Build/reuse summary through `TickrSummaryManager`.
+   6. Validate portfolio prompt input/output.
+   7. Generate and normalize weights.
+   8. Return `AgentResult` with selected tickers, allocation, metadata, and validation details.
+- **Evaluator pipeline (per run):**
+   1. Validate analysis prompt input/output.
+   2. Generate evaluation text and structured suggestions (`add`, `remove`, `reweight`).
+   3. Return `AgentResult` with analysis and suggestions.
+- **State and caching model:**
+   - `TickrDataManager` retains previously fetched ticker payloads across iterations.
+   - Cached ticker data is preserved even when a ticker is removed from the final portfolio.
+   - `TickrSummaryManager` caches summaries by `(ticker-set, data-version)`.
+   - `OrchestratorState` tracks `selected_tickers`, `recommended_tickers`, and `excluded_tickers`.
+- **Validation architecture:**
+   - Shared abstract output validation strategy with concrete validators for ticker, portfolio, and analysis stages.
+   - Runtime toggles under `validations` in `config.yml`:
+      - `enabled`, `validate_input`, `validate_output`, `fail_fast`
+      - per-stage toggles in `validations.prompts`.
+- **Display formatting:**
+   - `PortfolioDisplaySummary` formats recommendation changes for chat and portfolio tab display.
+   - Suggested changes are rendered in human-readable bullet form instead of raw JSON blobs.
+
 ## Project Structure
 ```
 yfinance-agent/
