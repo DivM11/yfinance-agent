@@ -19,6 +19,28 @@ from src.summaries import build_portfolio_summary
 
 
 class PortfolioCreatorAgent(BaseAgent):
+    DEFAULT_EXTRACTOR_SYSTEM = (
+        "Extract explicit US ticker symbols from user preferences. "
+        "Return strict JSON only: {\"include\": [\"AAPL\"], \"exclude\": [\"TSLA\"]}."
+    )
+    DEFAULT_EXTRACTOR_TEMPLATE = (
+        "User request: {user_input}\n"
+        "Extract explicitly requested include/exclude tickers. If none, return empty arrays."
+    )
+    DEFAULT_TICKER_SYSTEM = (
+        "You are a financial assistant. Return up to {num_tickers} comma-separated US stock tickers. "
+        "No explanations, no commentary."
+    )
+    DEFAULT_TICKER_TEMPLATE = "Create a portfolio with up to {num_tickers} US stock tickers for: {user_input}"
+    DEFAULT_WEIGHTS_SYSTEM = (
+        "You are a portfolio allocator. Respond with a single JSON object only. "
+        "No markdown fences, no explanation, no code blocks."
+    )
+    DEFAULT_WEIGHTS_TEMPLATE = (
+        "Allocate portfolio weights that sum to exactly 1.0 across these tickers.\n"
+        "Return ONLY a JSON object: {\"weights\": {\"TICKER\": 0.25}}\n\n"
+        "User preferences: {user_input}\nTickers: {tickers}\nSummary:\n{summary}"
+    )
     def __init__(
         self,
         llm_service: Any,
@@ -62,22 +84,24 @@ class PortfolioCreatorAgent(BaseAgent):
         session_id: Optional[str] = None,
         run_id: Optional[str] = None,
     ) -> tuple[List[str], List[str]]:
-        prompts_cfg = self.config["openrouter"]["prompts"]
-        outputs_cfg = self.config["openrouter"]["outputs"]
-        temperatures_cfg = self.config["openrouter"]["temperatures"]
-        models_cfg = self.config["openrouter"]["models"]
-        dashboard_cfg = self.config["dashboard"]
+        openrouter_cfg = self.config.get("openrouter", {})
+        prompts_cfg = openrouter_cfg.get("prompts", {})
+        outputs_cfg = openrouter_cfg.get("outputs", {})
+        temperatures_cfg = openrouter_cfg.get("temperatures", {})
+        models_cfg = openrouter_cfg.get("models", {})
+        dashboard_cfg = self.config.get("dashboard", {})
 
-        prompt = prompts_cfg["extractor_template"].format(user_input=user_query)
+        prompt_template = prompts_cfg.get("extractor_template", self.DEFAULT_EXTRACTOR_TEMPLATE)
+        prompt = prompt_template.format(user_input=user_query)
         response, _ = self.llm_service.complete(
             request_name="ticker_extractor",
-            model=models_cfg.get("extractor", models_cfg["ticker"]),
+            model=models_cfg.get("extractor") or models_cfg.get("ticker", "anthropic/claude-3.5-haiku"),
             max_tokens=outputs_cfg.get("extractor_max_tokens", 50),
             temperature=temperatures_cfg.get("extractor", 0.0),
             session_id=session_id,
             run_id=run_id,
             messages=[
-                {"role": "system", "content": prompts_cfg["extractor_system"]},
+                {"role": "system", "content": prompts_cfg.get("extractor_system", self.DEFAULT_EXTRACTOR_SYSTEM)},
                 {"role": "user", "content": prompt},
             ],
         )
@@ -97,31 +121,35 @@ class PortfolioCreatorAgent(BaseAgent):
         run_id: Optional[str] = None,
         followup: bool = False,
     ) -> tuple[List[str], str]:
-        prompts_cfg = self.config["openrouter"]["prompts"]
-        outputs_cfg = self.config["openrouter"]["outputs"]
-        temperatures_cfg = self.config["openrouter"]["temperatures"]
-        models_cfg = self.config["openrouter"]["models"]
-        dashboard_cfg = self.config["dashboard"]
+        openrouter_cfg = self.config.get("openrouter", {})
+        prompts_cfg = openrouter_cfg.get("prompts", {})
+        outputs_cfg = openrouter_cfg.get("outputs", {})
+        temperatures_cfg = openrouter_cfg.get("temperatures", {})
+        models_cfg = openrouter_cfg.get("models", {})
+        dashboard_cfg = self.config.get("dashboard", {})
+
+        ticker_system_template = prompts_cfg.get("ticker_system", self.DEFAULT_TICKER_SYSTEM)
+        ticker_template = prompts_cfg.get("ticker_template", self.DEFAULT_TICKER_TEMPLATE)
 
         if followup:
-            system_prompt = prompts_cfg.get("creator_followup_system", prompts_cfg["ticker_system"]).format(
+            system_prompt = prompts_cfg.get("creator_followup_system", ticker_system_template).format(
                 num_tickers=max_tickers
             )
-            prompt = prompts_cfg.get("creator_followup_template", prompts_cfg["ticker_template"]).format(
+            prompt = prompts_cfg.get("creator_followup_template", ticker_template).format(
                 user_input=user_query,
                 num_tickers=max_tickers,
             )
             request_name = "ticker_generation_followup"
         else:
-            system_prompt = prompts_cfg["ticker_system"].format(num_tickers=max_tickers)
-            prompt = prompts_cfg["ticker_template"].format(user_input=user_query, num_tickers=max_tickers)
+            system_prompt = ticker_system_template.format(num_tickers=max_tickers)
+            prompt = ticker_template.format(user_input=user_query, num_tickers=max_tickers)
             request_name = "ticker_generation"
 
         response, _ = self.llm_service.complete(
             request_name=request_name,
-            model=models_cfg["ticker"],
-            max_tokens=outputs_cfg["ticker_max_tokens"],
-            temperature=temperatures_cfg["ticker"],
+            model=models_cfg.get("ticker", "anthropic/claude-3.5-haiku"),
+            max_tokens=outputs_cfg.get("ticker_max_tokens", 100),
+            temperature=temperatures_cfg.get("ticker", 0.2),
             session_id=session_id,
             run_id=run_id,
             messages=[
@@ -130,7 +158,7 @@ class PortfolioCreatorAgent(BaseAgent):
             ],
         )
         raw_output = self.llm_service.extract_message_text(response)
-        tickers = extract_valid_tickers(raw_output, delimiter=dashboard_cfg["ticker_delimiter"])
+        tickers = extract_valid_tickers(raw_output, delimiter=dashboard_cfg.get("ticker_delimiter", ","))
         return tickers, raw_output
 
     def _fetch_data_and_filter_tickers(
@@ -156,8 +184,8 @@ class PortfolioCreatorAgent(BaseAgent):
             try:
                 ticker_data = self._stock_data_fetcher(
                     ticker=ticker,
-                    history_period=stocks_cfg["history_period"],
-                    financials_period=stocks_cfg["financials_period"],
+                    history_period=stocks_cfg.get("history_period", "1y"),
+                    financials_period=stocks_cfg.get("financials_period", "quarterly"),
                     massive_client=massive_client,
                 )
             except Exception:
@@ -188,25 +216,26 @@ class PortfolioCreatorAgent(BaseAgent):
         session_id: Optional[str] = None,
         run_id: Optional[str] = None,
     ) -> tuple[Dict[str, float], Dict[str, Any]]:
-        prompts_cfg = self.config["openrouter"]["prompts"]
-        outputs_cfg = self.config["openrouter"]["outputs"]
-        temperatures_cfg = self.config["openrouter"]["temperatures"]
-        models_cfg = self.config["openrouter"]["models"]
+        openrouter_cfg = self.config.get("openrouter", {})
+        prompts_cfg = openrouter_cfg.get("prompts", {})
+        outputs_cfg = openrouter_cfg.get("outputs", {})
+        temperatures_cfg = openrouter_cfg.get("temperatures", {})
+        models_cfg = openrouter_cfg.get("models", {})
 
-        weights_prompt = prompts_cfg["weights_template"].format(
+        weights_prompt = prompts_cfg.get("weights_template", self.DEFAULT_WEIGHTS_TEMPLATE).format(
             user_input=user_input,
             tickers=", ".join(tickers),
             summary=summary_text,
         )
         response, _ = self.llm_service.complete(
             request_name="weights_generation",
-            model=models_cfg["weights"],
-            max_tokens=outputs_cfg["weights_max_tokens"],
-            temperature=temperatures_cfg["weights"],
+            model=models_cfg.get("weights", "anthropic/claude-3.5-haiku"),
+            max_tokens=outputs_cfg.get("weights_max_tokens", 400),
+            temperature=temperatures_cfg.get("weights", 0.1),
             session_id=session_id,
             run_id=run_id,
             messages=[
-                {"role": "system", "content": prompts_cfg["weights_system"]},
+                {"role": "system", "content": prompts_cfg.get("weights_system", self.DEFAULT_WEIGHTS_SYSTEM)},
                 {"role": "user", "content": weights_prompt},
             ],
         )
@@ -230,8 +259,8 @@ class PortfolioCreatorAgent(BaseAgent):
     ) -> AgentResult:
         user_input = context["user_input"]
         portfolio_size = float(context["portfolio_size"])
-        stocks_cfg = self.config["stocks"]
-        max_tickers = stocks_cfg["max_tickers"]
+        stocks_cfg = self.config.get("stocks", {})
+        max_tickers = int(stocks_cfg.get("max_tickers", 10))
         session_id = context.get("session_id")
         run_id = context.get("run_id")
 
@@ -269,7 +298,7 @@ class PortfolioCreatorAgent(BaseAgent):
         summary_text = build_portfolio_summary(
             tickers=tickers_with_history,
             data_by_ticker=data_by_ticker,
-            financial_metrics=stocks_cfg["financials_metrics"],
+            financial_metrics=stocks_cfg.get("financials_metrics", []),
         )
         weights, weights_meta = self._generate_weights(
             user_input=user_input,

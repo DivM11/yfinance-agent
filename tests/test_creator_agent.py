@@ -84,3 +84,28 @@ def test_run_initial_builds_portfolio_result():
     assert set(result.tickers) == {"AAPL", "MSFT", "NVDA"}
     assert round(sum(result.weights.values()), 3) == 1.0
     assert round(sum(result.allocation.values()), 2) == 1000.0
+
+
+def test_run_initial_with_legacy_config_keys():
+    legacy_config = _config()
+    legacy_config["openrouter"]["prompts"].pop("extractor_system", None)
+    legacy_config["openrouter"]["prompts"].pop("extractor_template", None)
+    legacy_config["openrouter"]["models"].pop("extractor", None)
+    legacy_config["dashboard"] = {}
+
+    llm = DummyLLMService([
+        '{"include": [], "exclude": []}',
+        "AAPL, MSFT",
+        '{"weights": {"AAPL": 0.6, "MSFT": 0.4}}',
+    ])
+    agent = PortfolioCreatorAgent(
+        llm_service=llm,
+        config=legacy_config,
+        massive_client_factory=lambda _api_key: object(),
+        stock_data_fetcher=_fetcher,
+    )
+
+    result = agent.run_initial({"user_input": "tech portfolio", "portfolio_size": 1000.0})
+
+    assert result.tickers == ["AAPL", "MSFT"]
+    assert round(sum(result.weights.values()), 3) == 1.0
