@@ -17,6 +17,12 @@ ui:
   portfolio_size_label: "Portfolio Size ($)"
   chat_placeholder: "Describe your portfolio preferences"
   chat_intro: "Tell me what kind of portfolio you want and I will build it."
+  starter_prompts_label: "Quick start ideas"
+  starter_prompts:
+    - "Build a long-term growth portfolio focused on AI and cloud leaders."
+    - "Create a dividend-oriented portfolio for steady income."
+    - "Suggest a low-volatility portfolio across defensive sectors."
+    - "Make a balanced portfolio with large-cap US equities."
   chat_tab_label: "Chat"
   suggested_label: "Suggested Tickers:"
   ticker_header_template: "Data for {ticker}"

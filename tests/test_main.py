@@ -9,9 +9,11 @@ def test_main_runs(monkeypatch):
     class DummyStreamlit:
         def __init__(self) -> None:
             self.layout = None
+            self.page_icon = None
 
-        def set_page_config(self, layout: str) -> None:
+        def set_page_config(self, layout: str, page_icon: str | None = None) -> None:
             self.layout = layout
+            self.page_icon = page_icon
 
     dummy_st = DummyStreamlit()
 
@@ -35,4 +37,5 @@ def test_main_runs(monkeypatch):
     runpy.run_path(str(main_path), run_name="__main__")
 
     assert dummy_st.layout == "wide"
+    assert dummy_st.page_icon == "img/finance_icon.png"
     assert DummyDashboardModule.called_with == {"app": {"layout": "wide"}}

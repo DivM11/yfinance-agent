@@ -48,6 +48,12 @@ from src.tickr_summary_manager import TickrSummaryManager
 
 logger = logging.getLogger(__name__)
 MODEL_NAME_PATTERN = re.compile(r"^[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+(?::[a-zA-Z0-9_.-]+)?$")
+DEFAULT_STARTER_PROMPTS = [
+    "Build a long-term growth portfolio focused on AI and cloud leaders.",
+    "Create a dividend-oriented portfolio for steady income.",
+    "Suggest a low-volatility portfolio across defensive sectors.",
+    "Make a balanced portfolio with large-cap US equities.",
+]
 
 
 def _new_correlation_id() -> str:
@@ -264,10 +270,16 @@ def _init_state(default_user_input: str, default_portfolio_size: float, chat_int
     state.setdefault("tickr_summary_manager", TickrSummaryManager())
 
 
+def _chat_avatar(role: str) -> Optional[str]:
+    if role == "assistant":
+        return "img/bot.png"
+    return None
+
+
 def _push_chat_message(role: str, content: str, container) -> None:
     st.session_state["messages"].append({"role": role, "content": content})
     with container:
-        with st.chat_message(role):
+        with st.chat_message(role, avatar=_chat_avatar(role)):
             st.markdown(content)
 
 
@@ -339,11 +351,23 @@ def run_dashboard(config: Dict[str, Any]) -> None:
     chat_tab, history_tab, portfolio_tab = tabs
 
     with chat_tab:
+        starter_prompt_input = None
+        starter_prompts = ui.get("starter_prompts", DEFAULT_STARTER_PROMPTS)
+        if starter_prompts:
+            st.caption(ui.get("starter_prompts_label", "Try one:"))
+            prompt_columns = st.columns(len(starter_prompts))
+            for idx, column in enumerate(prompt_columns):
+                with column:
+                    if st.button(starter_prompts[idx], key=f"starter_prompt_{idx}"):
+                        starter_prompt_input = starter_prompts[idx]
+
         for message in st.session_state["messages"]:
-            with st.chat_message(message["role"]):
+            with st.chat_message(message["role"], avatar=_chat_avatar(message["role"])):
                 st.markdown(message["content"])
 
-        prompt_input = st.chat_input(ui["chat_placeholder"])
+        typed_prompt_input = st.chat_input(ui["chat_placeholder"])
+
+    prompt_input = typed_prompt_input or starter_prompt_input
 
     if prompt_input:
         session_id = _get_session_id()

@@ -274,7 +274,7 @@ class DummyStreamlit:
     def chat_input(self, _placeholder: str):
         return self._chat_input_value
 
-    def chat_message(self, role: str):
+    def chat_message(self, role: str, avatar: str | None = None):
         self.chat_messages.append(role)
         return DummyContainer()
 
