@@ -573,19 +573,19 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                 )
                 st.session_state["orchestrator_state"] = updated_state
                 _apply_orchestrator_state(updated_state)
-                _push_chat_message("assistant", updated_state.evaluator_result.analysis_text, chat_tab)
+                if updated_state.evaluator_result.analysis_text:
+                    st.session_state["messages"].append(
+                        {"role": "assistant", "content": updated_state.evaluator_result.analysis_text}
+                    )
                 if updated_state.pending_suggestions:
-                    _push_chat_message(
-                        "assistant",
-                        PortfolioDisplaySummary().format_suggestions(updated_state.pending_suggestions),
-                        chat_tab,
+                    st.session_state["messages"].append(
+                        {"role": "assistant", "content": PortfolioDisplaySummary().format_suggestions(updated_state.pending_suggestions)}
                     )
                 if updated_state.status == STATUS_MAX_ITERATIONS_REACHED:
-                    _push_chat_message(
-                        "assistant",
-                        ui.get("evaluator_max_reached", "Reached max refinement iterations. Keeping current portfolio."),
-                        chat_tab,
+                    st.session_state["messages"].append(
+                        {"role": "assistant", "content": ui.get("evaluator_max_reached", "Reached max refinement iterations. Keeping current portfolio.")}
                     )
+                st.rerun()
             elif reject:
                 final_state = orchestrator.reject_changes(
                     orchestrator_state,
@@ -593,7 +593,10 @@ def run_dashboard(config: Dict[str, Any]) -> None:
                     run_id=_new_correlation_id(),
                 )
                 st.session_state["orchestrator_state"] = final_state
-                _push_chat_message("assistant", ui.get("evaluator_rejected", "Keeping current portfolio without changes."), chat_tab)
+                st.session_state["messages"].append(
+                    {"role": "assistant", "content": ui.get("evaluator_rejected", "Keeping current portfolio without changes.")}
+                )
+                st.rerun()
 
     tickers = st.session_state.get("tickers", [])
     st.sidebar.write(ui["suggested_label"], tickers)

@@ -196,6 +196,10 @@ class DummyContainer:
         return False
 
 
+class DummyRerunException(Exception):
+    """Raised by DummyStreamlit.rerun() to mimic Streamlit's rerun behaviour."""
+
+
 class DummyPlaceholder:
     def __init__(self, markdowns=None, progress_updates=None):
         self._markdowns = markdowns
@@ -301,6 +305,9 @@ class DummyStreamlit:
 
     def button(self, _label: str, key: str | None = None) -> bool:
         return bool(self.button_values.get(key or _label, False))
+
+    def rerun(self):
+        raise DummyRerunException("rerun")
 
 
 def test_build_prompt():
@@ -856,13 +863,62 @@ def test_run_dashboard_accept_changes_updates_selected_and_suggested(monkeypatch
         },
     )
 
-    run_dashboard(_base_config(api_key="key"))
+    try:
+        run_dashboard(_base_config(api_key="key"))
+    except DummyRerunException:
+        pass
 
     assert "NVDA" in st.session_state["tickers"]
     assert "TSLA" not in st.session_state["tickers"]
     assert "TSLA" in st.session_state["excluded_tickers"]
     assert st.session_state["recommended_tickers"] == ["AAPL", "MSFT"]
-    assert sidebar.write_args == ("Suggested", st.session_state["tickers"])
+    # Updated analysis stored in messages (not rendered inline)
+    assert any("updated" in m["content"] for m in st.session_state["messages"] if m["role"] == "assistant")
+    assert st.session_state["agent_iteration"] == 2
+
+
+def test_run_dashboard_reject_changes_triggers_rerun(monkeypatch):
+    """Clicking 'Keep Current Portfolio' stores the rejection message and reruns."""
+    sidebar = DummySidebar()
+    st = DummyStreamlit(sidebar, chat_input_value="prompt", button_values={"reject_changes": True})
+    monkeypatch.setattr("src.dashboard.st", st)
+
+    monkeypatch.setattr(
+        "src.dashboard.create_openrouter_client",
+        lambda **_kwargs: DummyClient(
+            [
+                "AAPL, TSLA",
+                '{"weights": {"AAPL": 0.5, "TSLA": 0.5}}',
+                'analysis {"changes": {"add": ["NVDA"], "remove": ["TSLA"], "reweight": {}}}',
+            ]
+        ),
+    )
+    monkeypatch.setattr(
+        "src.dashboard.create_massive_client",
+        lambda **_kwargs: DummyMassiveClient(),
+    )
+    monkeypatch.setattr("src.dashboard.plot_history", lambda *_args, **_kwargs: "history")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_allocation", lambda *_args, **_kwargs: "allocation")
+    monkeypatch.setattr("src.dashboard.plot_portfolio_returns", lambda *_args, **_kwargs: "portfolio")
+    monkeypatch.setattr(
+        "src.dashboard.fetch_stock_data",
+        lambda *_args, **_kwargs: {
+            "history": pd.DataFrame({"Close": [1.0, 1.1]}),
+            "financials": pd.DataFrame({"metric": ["rev"]}),
+        },
+    )
+
+    try:
+        run_dashboard(_base_config(api_key="key"))
+    except DummyRerunException:
+        pass
+
+    assert any(
+        "Keeping current portfolio" in m["content"]
+        for m in st.session_state["messages"]
+        if m["role"] == "assistant"
+    )
+    assert st.session_state["orchestrator_state"].status == "COMPLETE"
 
 
 def test_run_dashboard_empty_analysis_text_not_pushed(monkeypatch):
